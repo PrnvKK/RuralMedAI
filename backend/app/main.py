@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
         ProcedureCodingService()
         logger.info("All clinical coding services ready.")
 
-    await asyncio.to_thread(_warmup)
+    asyncio.create_task(asyncio.to_thread(_warmup))
     try:
         yield
     finally:

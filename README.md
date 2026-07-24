@@ -88,52 +88,32 @@ backend/llama_cpp/models/mmproj.gguf
 
 The default download URLs are configured in `.env.example`.
 
-## Environment
-
-Create local env files:
+## One-Command Setup
 
 ```powershell
-Copy-Item .env.example .env
-Copy-Item backend\.env.example backend\.env
+python scripts/setup.py
 ```
 
-Generate a real AES key:
+This single script handles everything:
+
+| Step | What it does |
+|---|---|
+| Check prerequisites | Verifies Python 3.11+, Git, Docker |
+| Create venv | Isolated Python environment in `.venv/` |
+| Install deps | All Python packages + scispacy model |
+| Download binaries | Latest llama.cpp Windows binaries from GitHub releases |
+| Download models | Gemma 4 GGUF + mmproj via HuggingFace Hub (cached to `~/.cache/huggingface/`) |
+| Configure env | Creates `.env` files with generated AES-256 key |
+| Start PostgreSQL | Launches via `docker compose up -d postgres` |
+| Validate | Confirms all assets are present |
+
+After setup completes, start the services:
 
 ```powershell
-[Convert]::ToBase64String((1..32 | ForEach-Object {Get-Random -Maximum 256}))
-```
+# Terminal 1 - Backend
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8003
 
-Put that value in `AES_256_KEY`.
-
-For CUDA offload on Windows, set:
-
-```env
-LLAMA_SERVER_EXTRA_ARGS=-ngl 999
-```
-
-No hosted LLM or speech API key is required for the main pipeline.
-
-## Local Development
-
-### 1. Backend
-
-```powershell
-cd backend
-pip install -r ..\requirements.txt
-python -m spacy download en_core_sci_md
-python -m uvicorn app.main:app --reload --port 8003
-```
-
-On startup, the backend will:
-
-1. Load `backend/.env`.
-2. Download Gemma 4 model files if missing.
-3. Start `llama-server` on `127.0.0.1:8080`.
-4. Warm the ICD-10-CM and ICD-10-PCS coding services.
-
-### 2. Frontend
-
-```powershell
+# Terminal 2 - Frontend
 cd frontend
 npm install
 npm run dev
@@ -141,34 +121,38 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+On startup, the backend will:
+
+1. Load `backend/.env`.
+2. Start `llama-server` on `127.0.0.1:8080`.
+3. Warm the ICD-10-CM and ICD-10-PCS coding services.
+
+No hosted LLM or speech API key is required.
+
+### GPU Acceleration (optional)
+
+For NVIDIA GPU support, set the CUDA offload flag:
+
+```env
+LLAMA_SERVER_EXTRA_ARGS=-ngl 999
+```
+
 ## Docker Compose
 
 ```powershell
 docker compose up --build
 ```
 
-Docker starts four services:
-
-1. `gemma-models`: downloads Gemma 4 GGUF and mmproj into a persistent Docker volume.
-2. `llama-server`: runs `ghcr.io/ggml-org/llama.cpp:server-cuda` with `--n-gpu-layers 999`.
-3. `backend`: connects to `http://llama-server:8080`.
-4. `frontend`: serves the browser app.
-
-Docker GPU mode requires NVIDIA Container Toolkit / Docker GPU support. If Docker cannot see your NVIDIA GPU, use the local Windows path instead.
-
-Services:
-
-- Frontend: [http://localhost:3000](http://localhost:3000)
-- Backend API: [http://localhost:8003](http://localhost:8003)
-- Managed llama.cpp endpoint: [http://localhost:8080](http://localhost:8080)
-- PostgreSQL: `localhost:5432`
-
-To use CUDA 13 instead of CUDA 12:
+By default Docker runs CPU-only. For GPU, set the CUDA image:
 
 ```powershell
-$env:LLAMA_CPP_DOCKER_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda13"
+$env:LLAMA_CPP_DOCKER_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
 docker compose up --build
 ```
+
+Docker GPU mode requires NVIDIA Container Toolkit.
+
+
 
 ## Verification
 

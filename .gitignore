@@ -28,7 +28,10 @@ pitch_deck_images/
 
 # Local model and generated index artifacts
 *.gguf
+*.db
+*.download
 backend/llama_cpp/bin/
 backend/llama_cpp/models/
 backend/data/chroma/
 backend/data/tfidf_cache/
+backend/data/

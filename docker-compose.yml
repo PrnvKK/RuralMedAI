@@ -43,9 +43,10 @@ services:
       - llama_models:/models
 
   llama-server:
-    image: ${LLAMA_CPP_DOCKER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMA_CPP_DOCKER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: parchee-llama-server
-    gpus: all
+    # Uncomment the line below and set LLAMA_CPP_DOCKER_IMAGE to server-cuda for GPU
+    # gpus: all
     command:
       - -m
       - /models/gemma-4.gguf
