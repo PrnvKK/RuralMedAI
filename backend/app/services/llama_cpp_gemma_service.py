@@ -71,7 +71,7 @@ _load_local_env()
 @dataclass
 class LlamaCppConfig:
     mode: str = os.getenv("LLAMA_CPP_MODE", "auto").lower()
-    base_url: str = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080").rstrip("/")
+    base_url: str = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8085").rstrip("/")
     model_name: str = os.getenv("LLAMA_CPP_MODEL_NAME", "gemma-4")
     cli_path: Optional[str] = os.getenv("LLAMA_CPP_CLI_PATH")
     cli_args: str = os.getenv("LLAMA_CPP_CLI_ARGS", "")

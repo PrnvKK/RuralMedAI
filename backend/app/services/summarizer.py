@@ -4,7 +4,7 @@ import os
 import urllib.error
 import urllib.request
 
-LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8080").rstrip("/")
+LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:8085").rstrip("/")
 LLAMA_CPP_MODEL_NAME = os.getenv("LLAMA_CPP_MODEL_NAME", "gemma-4")
 LLAMA_CPP_TIMEOUT_SECONDS = int(os.getenv("LLAMA_CPP_TIMEOUT_SECONDS", "180"))
 SUMMARY_MAX_TOKENS = int(os.getenv("LLAMA_CPP_SUMMARY_MAX_TOKENS", "384"))

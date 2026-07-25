@@ -65,14 +65,14 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "8080"
+      - "8085"
       - --n-gpu-layers
       - ${LLAMA_SERVER_N_GPU_LAYERS:-999}
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     ports:
-      - "8080:8080"
+      - "8085:8085"
     volumes:
       - llama_models:/models:ro
       - ./backend/llama_templates:/templates:ro
@@ -90,7 +90,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ruralmed
       AES_256_KEY: ${AES_256_KEY}
       LLAMA_CPP_MODE: auto
-      LLAMA_CPP_BASE_URL: http://llama-server:8080
+      LLAMA_CPP_BASE_URL: http://llama-server:8085
       LLAMA_CPP_MODEL_NAME: gemma-4
       LLAMA_CPP_TIMEOUT_SECONDS: ${LLAMA_CPP_TIMEOUT_SECONDS:-180}
       LLAMA_CPP_MAX_TOKENS: ${LLAMA_CPP_MAX_TOKENS:-512}

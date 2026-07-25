@@ -28,7 +28,7 @@ def _path_from_env(name: str, default: Path) -> Path:
 class LlamaServerConfig:
     autostart: bool = os.getenv("LLAMA_SERVER_AUTOSTART", "true").lower() == "true"
     host: str = os.getenv("LLAMA_SERVER_HOST", "127.0.0.1")
-    port: int = int(os.getenv("LLAMA_SERVER_PORT", "8080"))
+    port: int = int(os.getenv("LLAMA_SERVER_PORT", "8085"))
     binary_path: Path = _path_from_env(
         "LLAMA_SERVER_BINARY",
         _repo_backend_dir() / "llama_cpp" / "bin" / "llama-server.exe",

@@ -124,7 +124,7 @@ Open [http://localhost:3000](http://localhost:3000).
 On startup, the backend will:
 
 1. Load `backend/.env`.
-2. Start `llama-server` on `127.0.0.1:8080`.
+2. Start `llama-server` on `127.0.0.1:8085`.
 3. Warm the ICD-10-CM and ICD-10-PCS coding services.
 
 No hosted LLM or speech API key is required.
