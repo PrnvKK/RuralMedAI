@@ -82,7 +82,7 @@ class LlamaCppConfig:
     vad_frame_ms: int = int(os.getenv("PARCHEE_VAD_FRAME_MS", "250"))
     vad_start_ms: int = int(os.getenv("PARCHEE_VAD_START_MS", "300"))
     vad_end_silence_ms: int = int(os.getenv("PARCHEE_VAD_END_SILENCE_MS", "900"))
-    max_speech_seconds: int = int(os.getenv("PARCHEE_MAX_SPEECH_SECONDS", "12"))
+    max_speech_seconds: int = int(os.getenv("PARCHEE_MAX_SPEECH_SECONDS", "5"))
     min_speech_ms: int = int(os.getenv("PARCHEE_MIN_SPEECH_MS", "700"))
     cli_threads: Optional[int] = (
         int(os.getenv("LLAMA_CPP_THREADS")) if os.getenv("LLAMA_CPP_THREADS") else None
@@ -282,6 +282,16 @@ class LlamaCppGemmaService:
             }
         )
 
+        # Keepalive: ping every 5s so the client/browser doesn't think the WebSocket died
+        keepalive_running = True
+        async def _ping_loop():
+            while keepalive_running:
+                await asyncio.sleep(5)
+                if keepalive_running:
+                    await self._safe_send_json(websocket, {"type": "heartbeat"})
+
+        ping_task = asyncio.create_task(_ping_loop())
+
         try:
             result_text = await asyncio.to_thread(self._run_inference, pcm_bytes)
             extraction = parse_extraction_response(result_text)
@@ -295,6 +305,13 @@ class LlamaCppGemmaService:
                 }
             )
             return
+        finally:
+            keepalive_running = False
+            ping_task.cancel()
+            try:
+                await ping_task
+            except asyncio.CancelledError:
+                pass
 
         transcript = extraction.get("transcript")
         if transcript:
@@ -433,39 +450,13 @@ def build_extraction_prompt(patient_state: Dict[str, Any]) -> str:
         for key, value in patient_state.items()
         if value not in (None, "", []) and value != {}
     }
-    return f"""
-You are Parchee Edge, an offline clinical documentation assistant.
-Listen to this 16 kHz mono consultation audio chunk and return ONLY valid JSON.
-Do not think step by step. Do not output hidden reasoning, chain-of-thought, markdown,
-XML tags, or <think> blocks. Your entire response must be a single JSON object.
+    return f"""Transcribe this audio and extract clinical fields. Return ONLY valid JSON. No thinking, no markdown.
 
-Goals:
-- Transcribe the segment in its original language/code-switching.
-- Extract only fields supported by the schema below.
-- Capture welfare/claim eligibility facts such as ration card, income, occupation, caste category, housing, and location when spoken.
-- Normalize colloquial clinical phrases when useful.
-- Label diagnosis as documentation support. Do not present autonomous medical advice.
-- If unsure, omit the field.
+Supported: name, age, gender, chief_complaint, symptoms, medical_history, family_history, allergies, medications, procedures, ration_card_type, income, occupation, caste_category, housing_type, location, tentative_doctor_diagnosis, initial_llm_diagnosis, vitals.temperature, vitals.blood_pressure, vitals.pulse, vitals.spo2
 
-Supported fields:
-name, age, gender, chief_complaint, symptoms, medical_history, family_history,
-allergies, medications, procedures, ration_card_type, income, occupation,
-caste_category, housing_type, location, tentative_doctor_diagnosis,
-initial_llm_diagnosis, transcript_summary, vitals.temperature,
-vitals.blood_pressure, vitals.pulse, vitals.spo2
+Known: {json.dumps(compact_state, ensure_ascii=False)}
 
-Current accumulated patient state:
-{json.dumps(compact_state, ensure_ascii=False)}
-
-Return shape:
-{{
-  "transcript": "single line transcript",
-  "updates": [
-    {{"field": "chief_complaint", "value": "fever for 3 days"}},
-    {{"field": "symptoms", "value": ["fever", "cough"]}}
-  ]
-}}
-""".strip()
+Format: {{"transcript": "...", "updates": [{{"field": "...", "value": "..."}}]}}"""
 
 
 def parse_extraction_response(text: str) -> Dict[str, Any]:
