@@ -1,4 +1,5 @@
 # backend/app/database.py
+import logging
 import os
 import json
 import base64
@@ -6,7 +7,10 @@ import secrets
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import psycopg2
 import psycopg2.extras
+from psycopg2 import sql
 from app.core.schema import PatientData
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/ruralmed")
 
@@ -106,7 +110,11 @@ def init_db():
         "billing_summary",
     ]
     for column in migration_columns:
-        cursor.execute(f"ALTER TABLE patients ADD COLUMN IF NOT EXISTS {column} TEXT")
+        cursor.execute(
+            sql.SQL("ALTER TABLE patients ADD COLUMN IF NOT EXISTS {} TEXT").format(
+                sql.Identifier(column)
+            )
+        )
 
     conn.commit()
     conn.close()
@@ -124,8 +132,8 @@ def save_patient(data: PatientData):
     
     # Safely get vitals from Pydantic model
     v = data.vitals
-    print(f"DEBUG: save_patient received data.vitals: {v}")
-    print(f"DEBUG: save_patient full data: {data.model_dump_json()}")
+    logger.debug("save_patient received data.vitals: %s", v)
+    logger.debug("save_patient full data: %s", data.model_dump_json())
     
     cursor.execute('''
         INSERT INTO patients (
@@ -356,7 +364,7 @@ def update_patient_billing(
     )
     conn.commit()
     conn.close()
-    print(f"Billing data saved for patient {patient_id}")
+    logger.info("Billing data saved for patient %d", patient_id)
 
 def update_patient_summary(patient_id: int, summary: str):
     """Update only the transcript_summary for an existing patient."""
@@ -365,4 +373,4 @@ def update_patient_summary(patient_id: int, summary: str):
     cursor.execute('UPDATE patients SET transcript_summary = %s WHERE id = %s', (encrypt_text(summary), patient_id))
     conn.commit()
     conn.close()
-    print(f"Updated summary for patient {patient_id}")
+    logger.info("Updated summary for patient %d", patient_id)

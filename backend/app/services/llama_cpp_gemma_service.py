@@ -113,9 +113,17 @@ class LlamaCppGemmaService:
             SAMPLE_RATE * SAMPLE_WIDTH_BYTES * self.config.min_speech_ms / 1000
         )
 
+    async def _safe_send_json(self, websocket: Any, data: dict) -> bool:
+        try:
+            await websocket.send_json(data)
+            return True
+        except Exception:
+            return False
+
     async def handle_session(self, websocket: Any):
         self.active_mode = await self._resolve_mode()
-        await websocket.send_json(
+        await self._safe_send_json(
+            websocket,
             {
                 "type": "content",
                 "text": f"Parchee Edge connected to local Gemma via llama.cpp ({self.active_mode} mode).\n",
@@ -128,7 +136,7 @@ class LlamaCppGemmaService:
 
             if data.get("type") == "end_session":
                 await self._flush(websocket, final=True, force=True)
-                await websocket.send_json({"type": "session_complete"})
+                await self._safe_send_json(websocket, {"type": "session_complete"})
                 return
 
             if "realtimeInput" not in data:
@@ -257,7 +265,8 @@ class LlamaCppGemmaService:
     async def _process_chunk(self, websocket: Any, pcm_bytes: bytes, final: bool):
         self.chunk_index += 1
         if is_probably_silent(pcm_bytes, self.config.min_rms):
-            await websocket.send_json(
+            await self._safe_send_json(
+                websocket,
                 {
                     "type": "content",
                     "text": f"Skipped silent audio window {self.chunk_index}.\n",
@@ -265,7 +274,8 @@ class LlamaCppGemmaService:
             )
             return
 
-        await websocket.send_json(
+        await self._safe_send_json(
+            websocket,
             {
                 "type": "content",
                 "text": f"Processing audio chunk {self.chunk_index}{' (final)' if final else ''}...\n",
@@ -277,7 +287,8 @@ class LlamaCppGemmaService:
             extraction = parse_extraction_response(result_text)
         except Exception as exc:
             logger.exception("Gemma chunk processing failed")
-            await websocket.send_json(
+            await self._safe_send_json(
+                websocket,
                 {
                     "type": "content",
                     "text": f"Local Gemma processing failed for chunk {self.chunk_index}: {exc}\n",
@@ -287,7 +298,8 @@ class LlamaCppGemmaService:
 
         transcript = extraction.get("transcript")
         if transcript:
-            await websocket.send_json(
+            await self._safe_send_json(
+                websocket,
                 {
                     "type": "content",
                     "text": f"Transcript {self.chunk_index}: {transcript}\n",
@@ -296,7 +308,8 @@ class LlamaCppGemmaService:
 
         for update in validate_updates(extraction.get("updates", [])):
             merged_value = self._merge_update(update["field"], update["value"])
-            await websocket.send_json(
+            await self._safe_send_json(
+                websocket,
                 {"type": "update", "field": update["field"], "value": merged_value}
             )
 
@@ -328,7 +341,11 @@ class LlamaCppGemmaService:
             response = self._post_chat_completions(
                 payload, timeout=self.config.timeout_seconds
             )
-            return response["choices"][0]["message"]["content"]
+            content = response["choices"][0]["message"]["content"]
+            finish_reason = response["choices"][0].get("finish_reason", "unknown")
+            logger.info("Gemma response: finish_reason=%s, length=%d, raw=%r",
+                        finish_reason, len(content), content[:500])
+            return content
 
         if not self.config.cli_path:
             raise RuntimeError("LLAMA_CPP_CLI_PATH is required for cli fallback mode")

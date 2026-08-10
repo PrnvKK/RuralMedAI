@@ -1,6 +1,7 @@
 # backend/app/main.py
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -13,6 +14,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 llama_server = LlamaServerManager()
 
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -20,6 +23,9 @@ async def lifespan(app: FastAPI):
     from app.services.procedure_coding_service import ProcedureCodingService
 
     await llama_server.start()
+    from app.database import init_db
+    logger.info("Initializing database...")
+    init_db()
 
     def _warmup():
         logger.info("Warming up ICDCodingService...")
@@ -46,7 +52,7 @@ app.include_router(ehr_router, prefix="/api/ehr")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
