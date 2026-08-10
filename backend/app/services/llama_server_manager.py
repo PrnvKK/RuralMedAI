@@ -74,8 +74,12 @@ class LlamaServerConfig:
         "LLAMA_SERVER_CHAT_TEMPLATE",
         _repo_backend_dir() / "llama_templates" / "gemma4_no_think.jinja",
     )
-    ctx_size: int = int(os.getenv("LLAMA_SERVER_CTX_SIZE", "2048"))
-    threads: int = int(os.getenv("LLAMA_SERVER_THREADS", "4"))
+    ctx_size: int = int(os.getenv("LLAMA_SERVER_CTX_SIZE", "4096"))
+    threads: int = int(os.getenv("LLAMA_SERVER_THREADS", "8"))
+    batch_size: int = int(os.getenv("LLAMA_SERVER_BATCH_SIZE", "2048"))
+    ubatch_size: int = int(os.getenv("LLAMA_SERVER_UBATCH_SIZE", "256"))
+    flash_attn: bool = os.getenv("LLAMA_SERVER_FLASH_ATTN", "true").lower() == "true"
+    numa: bool = os.getenv("LLAMA_SERVER_NUMA", "true").lower() == "true"
     extra_args: str = os.getenv("LLAMA_SERVER_EXTRA_ARGS", "")
 
 
@@ -258,8 +262,16 @@ class LlamaServerManager:
                 self.config.host,
                 "--port",
                 str(self.config.port),
+                "--batch-size",
+                str(self.config.batch_size),
+                "--ubatch-size",
+                str(self.config.ubatch_size),
             ]
         )
+        if self.config.flash_attn:
+            command.append("--flash-attn")
+        if self.config.numa:
+            command.extend(["--numa", "distribute"])
         if self.config.extra_args.strip():
             command.extend(self.config.extra_args.split())
         return command
