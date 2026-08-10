@@ -167,6 +167,7 @@ export default function Home() {
 
     const handleMessage = useCallback((data: any) => {
         const ts = nowClock();
+        console.log('[WS MSG]', data.type, data.field || '', typeof data.value === 'string' ? (data.value as string).slice(0, 40) : '');
 
         if (data.type === 'session_complete') {
             disconnectRef.current();

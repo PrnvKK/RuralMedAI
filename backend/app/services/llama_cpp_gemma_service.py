@@ -117,10 +117,13 @@ class LlamaCppGemmaService:
         try:
             await websocket.send_json(data)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("WS send failed (%s): %s", data.get("type", "?"), exc)
             return False
 
     async def handle_session(self, websocket: Any):
+        from fastapi import WebSocketDisconnect
+
         self.active_mode = await self._resolve_mode()
         await self._safe_send_json(
             websocket,
@@ -130,22 +133,26 @@ class LlamaCppGemmaService:
             }
         )
 
-        while True:
-            message = await websocket.receive_text()
-            data = json.loads(message)
+        try:
+            while True:
+                message = await websocket.receive_text()
+                data = json.loads(message)
 
-            if data.get("type") == "end_session":
-                await self._flush(websocket, final=True, force=True)
-                await self._safe_send_json(websocket, {"type": "session_complete"})
-                return
+                if data.get("type") == "end_session":
+                    await self._flush(websocket, final=True, force=True)
+                    await asyncio.sleep(0.2)
+                    await self._safe_send_json(websocket, {"type": "session_complete"})
+                    return
 
-            if "realtimeInput" not in data:
-                continue
+                if "realtimeInput" not in data:
+                    continue
 
-            for media_chunk in data["realtimeInput"].get("mediaChunks", []):
-                self.buffer.extend(base64.b64decode(media_chunk.get("data", "")))
+                for media_chunk in data["realtimeInput"].get("mediaChunks", []):
+                    self.buffer.extend(base64.b64decode(media_chunk.get("data", "")))
 
-            await self._drain_vad_frames(websocket)
+                await self._drain_vad_frames(websocket)
+        except WebSocketDisconnect:
+            logger.info("Client disconnected during session")
 
     async def _flush(self, websocket: Any, final: bool, force: bool = False):
         if self.buffer:
