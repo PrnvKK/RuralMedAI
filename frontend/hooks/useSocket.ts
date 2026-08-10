@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-
-const WS_URL = 'ws://localhost:8003/ws/live-consultation';
+import { API } from '@/lib/api';
 
 export const useSocket = (onMessageReceived: (data: any) => void) => {
     const [isConnected, setIsConnected] = useState(false);
@@ -9,7 +8,7 @@ export const useSocket = (onMessageReceived: (data: any) => void) => {
     const connect = useCallback(() => {
         if (socketRef.current?.readyState === WebSocket.OPEN) return;
 
-        const ws = new WebSocket(WS_URL);
+        const ws = new WebSocket(API.WS);
 
         ws.onopen = () => {
             console.log('✅ Connected to backend');

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, User, Activity, Calendar, FileText, Search, ClipboardList, Trash2, ChevronRight, Receipt, Stethoscope, RefreshCw, Download } from 'lucide-react';
 import Link from 'next/link';
 import { getAyushmanTemplate, getCGHSTemplate, getECHSTemplate } from '../utils/documentTemplates';
+import { API } from '@/lib/api';
 
 function downloadJson(filename: string, payload: unknown) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/fhir+json' });
@@ -60,7 +61,7 @@ export default function PatientsPage() {
         if (!patientToExport?.id) return;
 
         try {
-            const response = await fetch(`http://localhost:8003/api/ehr/patients/${patientToExport.id}/fhir`);
+            const response = await fetch(`${API.EHR}/patients/${patientToExport.id}/fhir`);
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
                 throw new Error(error.detail || 'FHIR export failed');
@@ -75,7 +76,7 @@ export default function PatientsPage() {
     };
 
     useEffect(() => {
-        fetch('http://localhost:8003/api/ehr/patients')
+        fetch(`${API.EHR}/patients`)
             .then(res => res.json())
             .then(data => {
                 setPatients(data);
@@ -97,7 +98,7 @@ export default function PatientsPage() {
         if (!patientToDelete) return;
 
         try {
-            const res = await fetch(`http://localhost:8003/api/ehr/patients/${patientToDelete.id}`, {
+            const res = await fetch(`${API.EHR}/patients/${patientToDelete.id}`, {
                 method: 'DELETE',
             });
             if (res.ok) {

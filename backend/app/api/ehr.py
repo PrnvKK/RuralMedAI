@@ -12,7 +12,6 @@ from app.database import (
     delete_patient,
     get_all_patients,
     get_patient_by_id,
-    init_db,
     save_patient,
     update_patient,
     update_patient_billing,
@@ -21,9 +20,6 @@ from app.database import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Initialize DB on module load
-init_db()
 
 
 # ---------------------------------------------------------------------------

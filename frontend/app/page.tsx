@@ -10,6 +10,7 @@ import { Mic, Square, Save, RefreshCw, FileText, Eraser, Clock3, Plus, Download 
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { clearScribeSession, loadScribeSession, saveScribeSession } from '@/lib/sessionStore';
+import { API } from '@/lib/api';
 
 const SEND_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_PARCHEE_SEND_INTERVAL_MS || 500);
 
@@ -91,7 +92,7 @@ export default function Home() {
         const patientId = searchParams?.get('patient_id');
         if (patientId) {
             console.log(`Resuming session for patient ${patientId}...`);
-            fetch(`http://localhost:8003/api/ehr/patients/${patientId}`)
+            fetch(`${API.BASE}/api/ehr/patients/${patientId}`)
                 .then(res => res.json())
                 .then(data => {
                     console.log("Loaded patient data:", data);
@@ -242,7 +243,7 @@ export default function Home() {
         }
     }, [isConnected]);
 
-    const { isRecording, startRecording, stopRecording, getAudioDevices } = useAudioStream(onAudioChunk);
+    const { isRecording, startRecording, stopRecording, getAudioDevices, audioLevel = 0 } = useAudioStream(onAudioChunk);
 
     useEffect(() => {
         getAudioDevices().then(devices => {
@@ -299,7 +300,7 @@ export default function Home() {
         let nextId = 1;
 
         try {
-            const response = await fetch('http://localhost:8003/api/ehr/patients');
+            const response = await fetch(`${API.EHR}/patients`);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
@@ -376,8 +377,8 @@ export default function Home() {
                     const { id, ...rest } = currentData;
                     return rest;
                 })();
-            const updateEndpoint = activePatientId ? `http://localhost:8003/api/ehr/patients/${activePatientId}` : '';
-            const createEndpoint = 'http://localhost:8003/api/ehr/commit';
+            const updateEndpoint = activePatientId ? `${API.EHR}/patients/${activePatientId}` : '';
+            const createEndpoint = `${API.EHR}/commit`;
             const createPayload = (() => {
                 const { id, ...rest } = payload;
                 return rest;
@@ -446,8 +447,8 @@ export default function Home() {
         setIsExportingFhir(true);
         try {
             const endpoint = activePatientId
-                ? `http://localhost:8003/api/ehr/patients/${activePatientId}/fhir`
-                : 'http://localhost:8003/api/ehr/fhir/export';
+                ? `${API.EHR}/patients/${activePatientId}/fhir`
+                : `${API.EHR}/fhir/export`;
             const response = await fetch(endpoint, activePatientId
                 ? undefined
                 : {
@@ -502,7 +503,7 @@ export default function Home() {
                     <div className="h-5 w-px bg-border/50" />
 
                     <div className="flex-1 px-4">
-                        <AudioVisualizer isRecording={isRecording} />
+                        <AudioVisualizer isRecording={isRecording} audioLevel={audioLevel} />
                     </div>
 
                     <div className="h-5 w-px bg-border/50" />

@@ -9,8 +9,9 @@ import {
     FileText, RefreshCw, User
 } from 'lucide-react';
 import Link from 'next/link';
+import { API } from '@/lib/api';
 
-const API_BASE = 'http://localhost:8003/api/ehr';
+const API_BASE = API.EHR;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

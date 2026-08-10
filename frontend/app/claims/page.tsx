@@ -11,6 +11,7 @@ import {
     getFieldMatchStatus,
     SchemeEvaluation,
 } from '@/lib/claimsEngine';
+import { API } from '@/lib/api';
 
 function cx(...values: Array<string | false | null | undefined>) {
     return values.filter(Boolean).join(' ');
@@ -53,7 +54,7 @@ export default function ClaimsPage() {
 
     const loadArchivedPatients = useCallback(async () => {
         try {
-            const response = await fetch('http://localhost:8003/api/ehr/patients');
+            const response = await fetch(`${API.EHR}/patients`);
             const data = await response.json();
             if (Array.isArray(data)) setArchivedPatients(data);
         } catch (error) {
