@@ -80,6 +80,7 @@ class LlamaServerConfig:
     ubatch_size: int = int(os.getenv("LLAMA_SERVER_UBATCH_SIZE", "256"))
     flash_attn: bool = os.getenv("LLAMA_SERVER_FLASH_ATTN", "true").lower() == "true"
     numa: bool = os.getenv("LLAMA_SERVER_NUMA", "true").lower() == "true"
+    n_gpu_layers: int = int(os.getenv("LLAMA_SERVER_N_GPU_LAYERS", "0"))
     extra_args: str = os.getenv("LLAMA_SERVER_EXTRA_ARGS", "")
 
 
@@ -106,6 +107,22 @@ class LlamaServerManager:
         self._validate_files()
         command = self._build_command()
         logger.info("Starting llama-server: %s", " ".join(str(part) for part in command))
+
+        # Warn if GPU offload requested but no Vulkan DLLs present
+        if self.config.n_gpu_layers > 0:
+            has_vulkan = any(
+                (self.config.binary_path.parent / f).exists()
+                for f in ("ggml-vulkan.dll", "ggml-vk.dll")
+            )
+            if has_vulkan:
+                logger.info("Vulkan GPU offload: %d layers", self.config.n_gpu_layers)
+            else:
+                logger.warning(
+                    "LLAMA_SERVER_N_GPU_LAYERS=%d but no Vulkan DLLs found — running CPU only. "
+                    "Download Vulkan build for GPU offload: "
+                    "https://github.com/ggml-org/llama.cpp/releases",
+                    self.config.n_gpu_layers,
+                )
 
         self.process = subprocess.Popen(
             command,
@@ -272,6 +289,8 @@ class LlamaServerManager:
             command.append("--flash-attn")
         if self.config.numa:
             command.extend(["--numa", "distribute"])
+        if self.config.n_gpu_layers > 0:
+            command.extend(["--n-gpu-layers", str(self.config.n_gpu_layers)])
         if self.config.extra_args.strip():
             command.extend(self.config.extra_args.split())
         return command
