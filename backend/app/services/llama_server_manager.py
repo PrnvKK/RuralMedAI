@@ -286,7 +286,7 @@ class LlamaServerManager:
             ]
         )
         if self.config.flash_attn:
-            command.append("--flash-attn")
+            command.extend(["--flash-attn", "on"])
         if self.config.numa:
             command.extend(["--numa", "distribute"])
         if self.config.n_gpu_layers > 0:
