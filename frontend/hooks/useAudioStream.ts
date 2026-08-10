@@ -8,6 +8,7 @@ export interface AudioChunk {
 
 export const useAudioStream = (onAudioChunk: (chunk: AudioChunk) => void) => {
     const [isRecording, setIsRecording] = useState(false);
+    const [audioLevel, setAudioLevel] = useState(0);
     const audioContextRef = useRef<AudioContext | null>(null);
     const workletNodeRef = useRef<AudioWorkletNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -51,12 +52,14 @@ export const useAudioStream = (onAudioChunk: (chunk: AudioChunk) => void) => {
 
             // 5. Handle Data from Worklet
             workletNode.port.onmessage = (event) => {
-                const int16Data = event.data; // ArrayBuffer from worklet
-                // Convert to Base64 to send over WebSocket
+                const int16Data = event.data;
                 const base64String = arrayBufferToBase64(int16Data);
+                const rms = calculateRms(int16Data);
+                const normalizedLevel = Math.min(rms / 32768, 1.0);
+                setAudioLevel(normalizedLevel);
                 onAudioChunk({
                     data: base64String,
-                    rms: calculateRms(int16Data),
+                    rms,
                     durationMs: (int16Data.byteLength / 2 / 16000) * 1000,
                 });
             };
@@ -87,9 +90,10 @@ export const useAudioStream = (onAudioChunk: (chunk: AudioChunk) => void) => {
             workletNodeRef.current = null;
         }
         setIsRecording(false);
+        setAudioLevel(0);
     }, []);
 
-    return { isRecording, startRecording, stopRecording, getAudioDevices };
+    return { isRecording, audioLevel, startRecording, stopRecording, getAudioDevices };
 };
 
 // Helper: Fast ArrayBuffer to Base64
