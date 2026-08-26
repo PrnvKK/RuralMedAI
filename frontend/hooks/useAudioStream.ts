@@ -27,7 +27,7 @@ export const useAudioStream = (onAudioChunk: (chunk: AudioChunk) => void) => {
 
     const startRecording = useCallback(async (deviceId?: string) => {
         try {
-            // 1. Init AudioContext at 16kHz to match Gemma 4 audio requirements
+            // 1. Init AudioContext at 16kHz — the backend VAD + Gemini 3.5 Transcribe pipeline expects 16kHz mono PCM
             const audioContext = new AudioContext({ sampleRate: 16000 });
             audioContextRef.current = audioContext;
 

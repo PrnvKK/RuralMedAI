@@ -1,7 +1,7 @@
-﻿"""Parchee Edge - Zero-to-Running Setup Script.
+"""Parchee Edge - Zero-to-Running Setup Script.
 
-Downloads all assets, configures the environment, and prepares
-everything needed to run Parchee Edge locally.
+Configures the environment and prepares everything needed to run
+Parchee Edge locally with the Gemini API.
 
 Usage:
     python scripts/setup.py
@@ -10,40 +10,26 @@ What it does:
     1. Checks prerequisites (Python, Git, Docker)
     2. Creates a Python virtual environment
     3. Installs all dependencies
-    4. Downloads llama.cpp Windows binaries from GitHub releases
-    5. Downloads Gemma 4 GGUF + multimodal projector via huggingface-hub
-    6. Creates .env files with generated AES key
-    7. Starts PostgreSQL via Docker
-    8. Validates the setup
+    4. Configures .env files (Gemini API key + generated AES key)
+    5. Starts PostgreSQL via Docker
+    6. Validates the Gemini API key against the live API
 """
 
-import os
-import sys
-import json
-import shutil
 import base64
+import os
 import secrets
+import shutil
 import subprocess
-import zipfile
-import tempfile
+import sys
 import time
 from pathlib import Path
-from urllib.request import Request, urlopen
-from urllib.error import URLError
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = REPO_ROOT / "backend"
-BIN_DIR = BACKEND_DIR / "llama_cpp" / "bin"
 VENV_DIR = REPO_ROOT / ".venv"
 
-HF_MODEL_REPO = "unsloth/gemma-4-E2B-it-GGUF"
-HF_GGUF_FILE = "gemma-4-E2B-it-Q4_K_M.gguf"
-HF_MMPROJ_FILE = "mmproj-BF16.gguf"
-
-LLAMA_CPP_RELEASE_API = (
-    "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
-)
 PYTHON_MIN_VERSION = (3, 11)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +57,7 @@ def _banner():
     print()
     print("=" * 52)
     print("  Parchee Edge - Rural Medical AI Setup")
-    print("  Local-first medical scribe & claim assistant")
+    print("  Medical scribe & claim assistant (Gemini API)")
     print("=" * 52)
     print()
 
@@ -92,6 +78,19 @@ def _warn(msg):
 def _fail(msg):
     print(f"\n  [FAIL] {msg}")
     sys.exit(1)
+
+
+def _read_existing_gemini_key() -> str:
+    for env_path in (REPO_ROOT / ".env", BACKEND_DIR / ".env"):
+        if not env_path.is_file():
+            continue
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("GEMINI_API_KEY="):
+                key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if key and "replace_with" not in key:
+                    return key
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -177,230 +176,70 @@ def _install_scispacy():
 
 
 # ---------------------------------------------------------------------------
-# Step 4: Download llama.cpp Windows binaries
+# Step 4: Configure environment files
 # ---------------------------------------------------------------------------
 
 
-def download_llama_cpp_binaries():
-    _step("Downloading llama.cpp Windows binaries")
-
-    existing = list(BIN_DIR.glob("llama-server*")) if BIN_DIR.exists() else []
-    if existing:
-        print("    llama.cpp binaries already present, skipping")
-        _ok()
-        return
-
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
-
-    tag = _fetch_llama_cpp_tag()
-    zip_name = f"llama-{tag}-bin-win-cpu-x64.zip"
-    zip_url = (
-        f"https://github.com/ggml-org/llama.cpp/releases/download/{tag}/{zip_name}"
-    )
-
-    print(f"    Latest release: {tag}")
-    print(f"    Downloading {zip_name} (~18 MB)...")
-
-    tmp_path = None
-    try:
-        tmp_path = _download_file(zip_url, f"Downloading llama.cpp {tag}")
-        print()
-
-        print(f"    Extracting to {BIN_DIR}...")
-        with zipfile.ZipFile(tmp_path, "r") as zf:
-            for member in zf.namelist():
-                if member.endswith((".exe", ".dll")):
-                    target_name = Path(member).name
-                    dest = BIN_DIR / target_name
-                    with zf.open(member) as src:
-                        with open(dest, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
-
-        os.unlink(tmp_path)
-
-        server_exe = BIN_DIR / "llama-server.exe"
-        if not server_exe.exists():
-            _fail("llama-server.exe not found after extraction")
-
-        file_count = len(list(BIN_DIR.glob("*")))
-        print(f"    Extracted {file_count} files")
-
-    except Exception as exc:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        _fail(f"Binary download failed: {exc}")
-
-    _ok()
-
-
-def _fetch_llama_cpp_tag():
-    try:
-        req = Request(
-            LLAMA_CPP_RELEASE_API,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "ParcheeEdge-Setup",
-            },
-        )
-        with urlopen(req, timeout=30) as resp:
-            release = json.loads(resp.read())
-        return release["tag_name"]
-    except (URLError, json.JSONDecodeError, KeyError) as exc:
-        _warn(f"Could not fetch latest release tag: {exc}")
-        fallback = "b10107"
-        print(f"    Using fallback tag: {fallback}")
-        return fallback
-
-
-def _download_file(url, label):
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    tmp_path = tmp.name
-    req = Request(url, headers={"User-Agent": "ParcheeEdge-Setup"})
-    with urlopen(req, timeout=120) as resp:
-        total = int(resp.headers.get("Content-Length", "0") or "0")
-        downloaded = 0
-        chunk_size = 1024 * 1024
-        while True:
-            chunk = resp.read(chunk_size)
-            if not chunk:
-                break
-            tmp.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = min(downloaded / total * 100, 100)
-                print(f"\r    {label}: {pct:.0f}%", end="", flush=True)
-    tmp.close()
-    return tmp_path
-
-
-# ---------------------------------------------------------------------------
-# Step 5: Download Gemma 4 models via huggingface_hub
-# ---------------------------------------------------------------------------
-
-
-def download_models():
-    _step("Downloading Gemma 4 GGUF models")
-
-    model_script_lines = [
-        "import sys",
-        "from huggingface_hub import hf_hub_download",
-        "",
-        "try:",
-        '    print("    Downloading Gemma 4 GGUF (Q4_K_M, ~4 GB)...")',
-        "    gguf = hf_hub_download(",
-        f'        repo_id="{HF_MODEL_REPO}",',
-        f'        filename="{HF_GGUF_FILE}",',
-        "        resume=True,",
-        "    )",
-        '    print(f"    Cached: {gguf}")',
-        "",
-        '    print("    Downloading multimodal projector...")',
-        "    mmproj = hf_hub_download(",
-        f'        repo_id="{HF_MODEL_REPO}",',
-        f'        filename="{HF_MMPROJ_FILE}",',
-        "        resume=True,",
-        "    )",
-        '    print(f"    Cached: {mmproj}")',
-        "",
-        '    print("RESULT")',
-        "    print(gguf)",
-        "    print(mmproj)",
-        "except Exception as e:",
-        '    print(f"ERROR: {e}", file=sys.stderr)',
-        "    sys.exit(1)",
-    ]
-
-    model_script = "\n".join(model_script_lines)
-
-    result = subprocess.run(
-        [_python_exe(), "-c", model_script],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-    )
-
-    if result.returncode != 0:
-        _fail(f"Model download failed:\n{result.stderr}")
-
-    lines = result.stdout.strip().split("\n")
-    result_idx = None
-    for i, line in enumerate(lines):
-        if line.strip() == "RESULT":
-            result_idx = i
-            break
-
-    if result_idx is None or result_idx + 2 >= len(lines):
-        _fail("Could not parse model download output")
-
-    gguf_path = lines[result_idx + 1].strip()
-    mmproj_path = lines[result_idx + 2].strip()
-
-    gguf_file = Path(gguf_path)
-    mmproj_file = Path(mmproj_path)
-
-    if not gguf_file.exists():
-        _fail(f"GGUF model not found at {gguf_path}")
-    if not mmproj_file.exists():
-        _fail(f"mmproj model not found at {mmproj_path}")
-
-    gguf_gb = gguf_file.stat().st_size / (1024**3)
-    print(f"    Gemma 4 GGUF: {gguf_gb:.1f} GB")
-
-    _ok()
-    return gguf_path, mmproj_path
-
-
-# ---------------------------------------------------------------------------
-# Step 6: Configure environment files
-# ---------------------------------------------------------------------------
-
-
-def setup_env_files(gguf_path, mmproj_path):
+def setup_env_files() -> str:
     _step("Configuring environment files")
 
-    # Root .env
-    root_env = REPO_ROOT / ".env.example"
-    root_target = REPO_ROOT / ".env"
-    if not root_target.exists() and root_env.exists():
-        shutil.copy(root_env, root_target)
-        print(f"    Created {root_target.name}")
+    api_key = _read_existing_gemini_key()
+    if not api_key:
+        print()
+        print("    A Gemini API key is required (get one at https://aistudio.google.com/apikey).")
+        api_key = input("    Enter GEMINI_API_KEY: ").strip()
+        if not api_key:
+            _fail("A Gemini API key is required to run Parchee Edge.")
 
-    # Backend .env
-    backend_env = BACKEND_DIR / ".env.example"
-    backend_target = BACKEND_DIR / ".env"
-    if backend_env.exists():
-        env_text = backend_env.read_text(encoding="utf-8")
+    aes_key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    print("    Generated AES-256 key")
 
-        aes_key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        print("    Generated AES-256 key")
+    for env_example, target in (
+        (REPO_ROOT / ".env.example", REPO_ROOT / ".env"),
+        (BACKEND_DIR / ".env.example", BACKEND_DIR / ".env"),
+    ):
+        if not env_example.exists():
+            _warn(f"{env_example.name} not found - skipping {target}")
+            continue
 
-        bin_path = str(BIN_DIR / "llama-server.exe")
-
-        replacements = {
-            "replace_with_base64_32byte_key": aes_key,
-            "llama_cpp/bin/llama-server.exe": bin_path,
-            "llama_cpp/models/gemma-4.gguf": gguf_path,
-            "llama_cpp/models/mmproj.gguf": mmproj_path,
-        }
-
-        for old, new in replacements.items():
-            env_text = env_text.replace(old, new)
-
-        env_text = env_text.replace(
-            "LLAMA_SERVER_DOWNLOAD_MODELS=true",
-            "LLAMA_SERVER_DOWNLOAD_MODELS=false",
-        )
-
-        backend_target.write_text(env_text, encoding="utf-8")
-        print(f"    Updated paths in backend/{backend_target.name}")
-    else:
-        _warn("backend/.env.example not found - skipping env setup")
+        if target.exists():
+            _update_env_value(target, "GEMINI_API_KEY", api_key)
+            if not _env_has_real_value(target, "AES_256_KEY"):
+                _update_env_value(target, "AES_256_KEY", aes_key)
+            print(f"    Updated {target}")
+        else:
+            env_text = env_example.read_text(encoding="utf-8")
+            env_text = env_text.replace("replace_with_your_gemini_api_key", api_key)
+            env_text = env_text.replace("replace_with_base64_32byte_key", aes_key)
+            target.write_text(env_text, encoding="utf-8")
+            print(f"    Created {target}")
 
     _ok()
+    return api_key
+
+
+def _update_env_value(path: Path, key: str, value: str):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    updated = False
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[i] = f"{key}={value}"
+            updated = True
+    if not updated:
+        lines.append(f"{key}={value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _env_has_real_value(path: Path, key: str) -> bool:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{key}="):
+            value = line.split("=", 1)[1].strip()
+            return bool(value) and "replace_with" not in value
+    return False
 
 
 # ---------------------------------------------------------------------------
-# Step 7: Start PostgreSQL via Docker
+# Step 5: Start PostgreSQL via Docker
 # ---------------------------------------------------------------------------
 
 
@@ -441,44 +280,46 @@ def start_postgres():
 
 
 # ---------------------------------------------------------------------------
-# Step 8: Validation
+# Step 6: Validation
 # ---------------------------------------------------------------------------
 
 
 def validate_setup():
-    _step("Validating setup")
+    _step("Validating Gemini API access")
 
-    errors = []
+    check_script = (
+        "import sys; sys.path.insert(0, 'backend');\n"
+        "from app.services.gemini_client import GeminiClient;\n"
+        "client = GeminiClient();\n"
+        "reply = client.generate_text(prompt='Reply with exactly: OK', model='gemini-3.5-flash',"
+        " max_output_tokens=512, thinking_level='low');\n"
+        "print('REPLY:' + reply)\n"
+    )
 
-    server_exe = BIN_DIR / "llama-server.exe"
-    if not server_exe.exists():
-        errors.append(f"llama-server.exe missing at {server_exe}")
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    result = subprocess.run(
+        [_python_exe(), "-c", check_script],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+    if result.returncode != 0:
+        _fail(f"Gemini API check failed:\n{result.stderr.strip()[:500]}")
+
+    reply = next((line for line in result.stdout.splitlines() if line.startswith("REPLY:")), "")
+    if "OK" not in reply:
+        _warn(f"Unexpected reply from Gemini API: {reply!r}")
+
+    _ok("Gemini API key is valid")
 
     env_file = BACKEND_DIR / ".env"
-    if env_file.exists():
-        env_text = env_file.read_text(encoding="utf-8")
-        for line in env_text.split("\n"):
-            line = line.strip()
-            if line.startswith("LLAMA_SERVER_MODEL=") and not line.startswith("#"):
-                p = line.split("=", 1)[1].strip()
-                if not Path(p).exists():
-                    errors.append(f"GGUF model missing: {p}")
-                else:
-                    gb = Path(p).stat().st_size / (1024**3)
-                    print(f"    Model:  {Path(p).name} ({gb:.1f} GB)")
-            if line.startswith("LLAMA_SERVER_MMPROJ=") and not line.startswith("#"):
-                p = line.split("=", 1)[1].strip()
-                if not Path(p).exists():
-                    errors.append(f"mmproj missing: {p}")
-    else:
-        errors.append("backend/.env not found")
-
-    if errors:
-        for e in errors:
-            print(f"    [MISSING] {e}")
-        _fail(f"Found {len(errors)} issues. Re-run setup or fix manually.")
-    else:
-        _ok("All assets present and accounted for")
+    if not env_file.exists():
+        _fail("backend/.env not found")
+    if not _env_has_real_value(env_file, "GEMINI_API_KEY"):
+        _fail("GEMINI_API_KEY missing from backend/.env")
 
 
 # ---------------------------------------------------------------------------
@@ -492,9 +333,7 @@ def main():
     check_prerequisites()
     setup_venv()
     install_dependencies()
-    download_llama_cpp_binaries()
-    gguf_path, mmproj_path = download_models()
-    setup_env_files(gguf_path, mmproj_path)
+    setup_env_files()
     start_postgres()
     validate_setup()
 
