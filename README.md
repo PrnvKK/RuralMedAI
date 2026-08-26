@@ -1,16 +1,16 @@
 # Parchee Edge
 
-**Parchee Edge** is a local-first medical scribe and claim-readiness assistant for low-connectivity clinics. It listens to a consultation, uses **Gemma 4 audio understanding through llama.cpp** to extract structured encounter data, and then runs offline ICD-10-CM / ICD-10-PCS coding so a clinician can review a cleaner, claim-ready record.
+**Parchee Edge** is a medical scribe and claim-readiness assistant for low-connectivity clinics. It listens to a consultation, uses **Gemini 3.5 Transcribe** for intelligent speech-to-text plus **Gemini 3.5 Flash** for structured clinical extraction, and then runs offline ICD-10-CM / ICD-10-PCS coding so a clinician can review a cleaner, claim-ready record.
 
-The project is built for the Kaggle Gemma 4 Good Hackathon. The core goal is not diagnosis automation; it is faster, private, clinician-controlled documentation.
+The core goal is not diagnosis automation; it is faster, private, clinician-controlled documentation.
 
 ## What It Does
 
 | Feature | Description |
 | --- | --- |
-| Local Gemma 4 scribe | Browser microphone audio is segmented by backend VAD and sent to local Gemma 4 via `llama-server`. |
-| Structured clinical updates | Gemma 4 returns strict JSON updates for demographics, symptoms, vitals, history, medications, procedures, diagnoses, and claim-relevant social fields. |
-| Gemma 4 summaries and notes | Post-visit summaries and `/api/generate-note` clinical note drafts use the same local llama.cpp endpoint. |
+| Gemini 3.5 Transcribe scribe | Browser microphone audio is segmented by backend VAD and transcribed by `gemini-3.5-transcribe` via the Gemini API — smart transcription removes filler words, handles medical jargon, and auto-detects 85+ languages. |
+| Structured clinical updates | `gemini-3.5-flash` returns strict JSON updates (via structured output) for demographics, symptoms, vitals, history, medications, procedures, diagnoses, and claim-relevant social fields. |
+| Gemini summaries and notes | Post-visit summaries and `/api/generate-note` clinical note drafts use Gemini 3.5 Flash. |
 | Adaptive audio windows | Speech starts and ends are detected automatically, so silence is skipped and short utterances do not wait for a full fixed buffer. |
 | Offline ICD/PCS coding | ICD-10-CM and ICD-10-PCS suggestions use local TF-IDF, char n-gram, and ChromaDB semantic search. |
 | Claim review workflow | Clinicians can inspect auto-coded encounters, search code databases, and confirm billing evidence. |
@@ -24,9 +24,9 @@ flowchart LR
     Worklet --> WS["WebSocket\n/ws/live-consultation"]
     WS --> VAD["FastAPI adaptive VAD\nspeech windows only"]
     VAD --> WAV["PCM -> WAV"]
-    WAV --> Llama["Managed llama-server\nGemma 4 + mmproj"]
-    Llama --> JSON["Strict JSON\ntranscript + updates"]
-    JSON --> UI["Live clinical form"]
+    WAV --> Transcribe["Gemini 3.5 Transcribe\npolished transcript"]
+    Transcribe --> Extract["Gemini 3.5 Flash\nstructured JSON updates"]
+    Extract --> UI["Live clinical form"]
     UI --> EHR["Commit to EHR"]
     EHR --> Coding["Offline ICD-10-CM / PCS coding\nTF-IDF + ChromaDB"]
     Coding --> Review["Billing / claim review"]
@@ -39,22 +39,22 @@ backend/
   app/
     api/                     REST and WebSocket routes
     services/
-      llama_server_manager.py       downloads model assets and starts llama-server
-      llama_cpp_gemma_service.py    Gemma 4 audio extraction pipeline
+      gemini_client.py             Gemini Interactions API REST client (retries, env loading)
+      gemini_transcribe_service.py VAD + transcribe + extraction pipeline
       icd_coding_service.py         ICD-10-CM hybrid coding
       procedure_coding_service.py   ICD-10-PCS hybrid coding
-      summarizer.py                 local Gemma 4 encounter summary
+      summarizer.py                 Gemini encounter summary + clinical notes
     database.py              encrypted persistence
-  llama_templates/           no-thinking Gemma 4 chat template
-  tests/                     llama.cpp adapter and parsing tests
+  tests/                     Gemini pipeline, client, VAD, and parsing tests
 
 frontend/
   app/                       Next.js app routes
   hooks/useAudioStream.ts    microphone capture hook
   public/worklet.js          browser PCM worklet
 
-docs/
-  kaggle_writeup.md          submission writeup draft
+scripts/
+  setup.py                   one-command bootstrap (venv, deps, env, postgres)
+  validate_gemini.py         live validation against the Gemini API
 ```
 
 ## Requirements
@@ -63,30 +63,9 @@ docs/
 - Python 3.11+
 - Node.js 20+
 - PostgreSQL for persistent EHR storage
-- A llama.cpp build with Gemma 4 multimodal support
-- Recommended for demo: NVIDIA GPU + CUDA-enabled `llama-server`
+- A Gemini API key ([get one free at Google AI Studio](https://aistudio.google.com/apikey))
 
-For local Windows development, place your Windows llama.cpp binaries here:
-
-```text
-backend/llama_cpp/bin/llama-server.exe
-backend/llama_cpp/bin/*.dll
-```
-
-Docker Compose does not need a local Linux llama.cpp binary. It pulls the CUDA server image directly from GitHub Container Registry:
-
-```text
-ghcr.io/ggml-org/llama.cpp:server-cuda
-```
-
-The backend can download the Gemma 4 GGUF model and multimodal projector automatically into:
-
-```text
-backend/llama_cpp/models/gemma-4.gguf
-backend/llama_cpp/models/mmproj.gguf
-```
-
-The default download URLs are configured in `.env.example`.
+No local model downloads are needed — inference runs on Google's Gemini API.
 
 ## One-Command Setup
 
@@ -101,11 +80,9 @@ This single script handles everything:
 | Check prerequisites | Verifies Python 3.11+, Git, Docker |
 | Create venv | Isolated Python environment in `.venv/` |
 | Install deps | All Python packages + scispacy model |
-| Download binaries | Latest llama.cpp Windows binaries from GitHub releases |
-| Download models | Gemma 4 GGUF + mmproj via HuggingFace Hub (cached to `~/.cache/huggingface/`) |
-| Configure env | Creates `.env` files with generated AES-256 key |
+| Configure env | Creates `.env` files with your Gemini API key and a generated AES-256 key |
 | Start PostgreSQL | Launches via `docker compose up -d postgres` |
-| Validate | Confirms all assets are present |
+| Validate | Confirms the Gemini API key works against the live API |
 
 After setup completes, start the services:
 
@@ -124,17 +101,16 @@ Open [http://localhost:3000](http://localhost:3000).
 On startup, the backend will:
 
 1. Load `backend/.env`.
-2. Start `llama-server` on `127.0.0.1:8085`.
-3. Warm the ICD-10-CM and ICD-10-PCS coding services.
+2. Warm the ICD-10-CM and ICD-10-PCS coding services.
 
-No hosted LLM or speech API key is required.
-
-### GPU Acceleration (optional)
-
-For NVIDIA GPU support, set the CUDA offload flag:
+Configure models through `.env`:
 
 ```env
-LLAMA_SERVER_EXTRA_ARGS=-ngl 999
+GEMINI_API_KEY=your_key
+GEMINI_TRANSCRIBE_MODEL=gemini-3.5-transcribe
+GEMINI_EXTRACT_MODEL=gemini-3.5-flash
+GEMINI_CUSTOM_VOCABULARY=paracetamol, SpO2, bronchodilator   # optional
+GEMINI_LANGUAGE=Hindi                                         # optional, empty = auto-detect
 ```
 
 ## Docker Compose
@@ -143,16 +119,7 @@ LLAMA_SERVER_EXTRA_ARGS=-ngl 999
 docker compose up --build
 ```
 
-By default Docker runs CPU-only. For GPU, set the CUDA image:
-
-```powershell
-$env:LLAMA_CPP_DOCKER_IMAGE="ghcr.io/ggml-org/llama.cpp:server-cuda"
-docker compose up --build
-```
-
-Docker GPU mode requires NVIDIA Container Toolkit.
-
-
+Set `GEMINI_API_KEY` in the root `.env` before building; Compose passes it to the backend container.
 
 ## Verification
 
@@ -163,6 +130,12 @@ cd backend
 python -m unittest discover -s tests
 ```
 
+Live Gemini API validation (checks the key, transcription, extraction, and the full service pipeline):
+
+```powershell
+python scripts/validate_gemini.py path/to/audio.wav
+```
+
 Frontend build:
 
 ```powershell
@@ -170,17 +143,14 @@ cd frontend
 npm run build
 ```
 
-## Hackathon Materials
+## Demo Flow
 
-- Kaggle writeup draft: [docs/kaggle_writeup.md](docs/kaggle_writeup.md)
-- Architecture summary: [architecture.md](architecture.md)
-- Demo flow:
-  1. Start backend and frontend.
-  2. Begin consultation.
-  3. Speak a short Hinglish or English clinical encounter with vitals.
-  4. Watch fields populate from local Gemma 4.
-  5. Commit to EHR.
-  6. Open Diagnostics/Billing to show ICD/PCS suggestions and claim review.
+1. Start backend and frontend.
+2. Begin consultation.
+3. Speak a short Hinglish or English clinical encounter with vitals.
+4. Watch fields populate from Gemini 3.5 Transcribe + Flash.
+5. Commit to EHR.
+6. Open Diagnostics/Billing to show ICD/PCS suggestions and claim review.
 
 ## Safety Note
 

@@ -1,6 +1,6 @@
 # Parchee Edge Architecture
 
-Parchee Edge is organized around one local inference loop: browser audio becomes short speech windows, Gemma 4 converts those windows into structured clinical updates, and local coding services turn reviewed encounters into billing-ready evidence.
+Parchee Edge is organized around one inference loop: browser audio becomes short speech windows, Gemini 3.5 Transcribe converts those windows into polished transcripts, Gemini 3.5 Flash extracts structured clinical updates, and local coding services turn reviewed encounters into billing-ready evidence.
 
 ## System Diagram
 
@@ -16,17 +16,17 @@ flowchart TB
     subgraph Backend["FastAPI Backend"]
         WS["WebSocket session handler"]
         VAD["Adaptive VAD\nRMS speech gate"]
+        Queue["Ordered processing queue\n(keeps WS alive during inference)"]
         Prompt["Compact patient-state prompt"]
         Validate["JSON parser + schema validator"]
         EHR["Encrypted EHR persistence"]
-        Summary["Gemma 4 summary\n+ clinical note drafting"]
+        Summary["Gemini summary\n+ clinical note drafting"]
         Coding["ICD-10-CM / ICD-10-PCS coding"]
     end
 
-    subgraph LlamaCpp["Local llama.cpp Runtime"]
-        Manager["llama_server_manager.py\nstart/download/monitor"]
-        Server["llama-server"]
-        Gemma["Gemma 4 E2B GGUF\n+ mmproj"]
+    subgraph Gemini["Gemini API (Interactions API)"]
+        Transcribe["gemini-3.5-transcribe\nsmart speech-to-text"]
+        Flash["gemini-3.5-flash\nstructured JSON extraction"]
     end
 
     subgraph Retrieval["Offline Coding Indexes"]
@@ -36,10 +36,9 @@ flowchart TB
     end
 
     Mic --> Worklet --> WS
-    WS --> VAD --> Prompt --> Server
-    Manager --> Server
-    Server --> Gemma
-    Gemma --> Validate --> Form
+    WS --> VAD --> Queue --> Transcribe
+    Transcribe --> Flash
+    Flash --> Validate --> Form
     Form --> EHR
     EHR --> Summary
     EHR --> Coding
@@ -54,12 +53,11 @@ flowchart TB
 1. The browser captures microphone input and converts it to 16 kHz mono PCM.
 2. Audio frames are streamed to `/ws/live-consultation`.
 3. The backend uses adaptive VAD to ignore silence and flush natural speech windows.
-4. Each speech window is wrapped as WAV and sent to local `llama-server`.
-5. Gemma 4 returns strict JSON:
+4. Each speech window is wrapped as WAV and sent to `gemini-3.5-transcribe` (Interactions API), which returns a polished transcript — filler words removed, medical jargon recognized, language auto-detected.
+5. The transcript plus known patient state goes to `gemini-3.5-flash` with a JSON response schema, which returns strict updates:
 
 ```json
 {
-  "transcript": "patient says fever for three days",
   "updates": [
     {"field": "chief_complaint", "value": "fever for 3 days"},
     {"field": "symptoms", "value": ["fever"]}
@@ -67,33 +65,33 @@ flowchart TB
 }
 ```
 
-## Gemma 4 Runtime
+Chunks are processed by an ordered background worker so slow Gemini calls never stall the WebSocket receive loop (keepalive pings stay answered even when inference takes 10+ seconds).
 
-The backend manages `llama-server` directly so the demo has a single startup path.
+## Gemini Runtime
 
-Startup responsibilities:
+All inference goes through the Gemini Interactions API (`POST /v1beta/interactions`, `x-goog-api-key` auth) via `app/services/gemini_client.py`, which adds:
 
-- Download `gemma-4.gguf` and `mmproj.gguf` if they are missing.
-- Start `llama-server` with the custom no-thinking template.
-- Use `--reasoning off`, `--reasoning-budget 0`, and `--ctx-size 2048`.
-- Add GPU offload through `LLAMA_SERVER_EXTRA_ARGS=-ngl 999` when available.
-- Stream llama.cpp logs into backend logs for debugging.
+- Automatic retries with exponential backoff on 429/5xx and network errors.
+- `status: incomplete` detection so truncated output is never parsed as data.
+- Env loading from repo root and `backend/` `.env` files.
 
 Primary environment variables:
 
 ```env
-LLAMA_SERVER_AUTOSTART=true
-LLAMA_SERVER_BINARY=llama_cpp/bin/llama-server.exe
-LLAMA_SERVER_MODEL=llama_cpp/models/gemma-4.gguf
-LLAMA_SERVER_MMPROJ=llama_cpp/models/mmproj.gguf
-LLAMA_SERVER_CTX_SIZE=2048
-LLAMA_SERVER_THREADS=4
-LLAMA_SERVER_EXTRA_ARGS=-ngl 999
+GEMINI_API_KEY=your_key
+GEMINI_TRANSCRIBE_MODEL=gemini-3.5-transcribe
+GEMINI_EXTRACT_MODEL=gemini-3.5-flash
+GEMINI_MAX_OUTPUT_TOKENS=4096
+GEMINI_THINKING_LEVEL=low
+GEMINI_CUSTOM_VOCABULARY=
+GEMINI_LANGUAGE=
 ```
+
+Note: `max_output_tokens` must be generous (4096) because Gemini 3.5 Flash is a thinking model — thought tokens count against the output budget. With a small cap the interaction ends `incomplete` and the JSON is truncated.
 
 ## Structured Extraction Schema
 
-Gemma 4 updates are accepted only if their field names are in the backend schema. Supported fields include:
+Gemini updates are accepted only if their field names are in the backend schema. Supported fields include:
 
 - `name`, `age`, `gender`
 - `chief_complaint`, `symptoms`
@@ -106,20 +104,17 @@ List fields are merged and deduplicated across speech windows. Empty or malforme
 
 ## Coding Pipeline
 
-ICD and procedure coding are separate from Gemma 4 generation. This keeps the app explainable and fast:
+ICD and procedure coding are separate from Gemini generation. This keeps the app explainable and fast:
 
 - Exact code lookup returns immediately.
 - Word TF-IDF handles direct clinical terminology.
 - Character n-gram TF-IDF handles partial words and typos.
 - ChromaDB semantic search handles concept-level similarity.
 
-This makes the coding path offline after initial dependency setup and avoids sending patient records to a cloud embedding API.
+This makes the coding path fully offline after initial dependency setup.
 
 ## Privacy Position
 
-The main pipeline is local-first:
-
-- Patient audio is processed by local Gemma 4 through llama.cpp.
+- Patient audio is sent to the Gemini API for transcription and extraction (configurable models; no data is stored by the client beyond session state).
 - Coding retrieval runs locally.
 - Patient data is encrypted before storage.
-- No hosted LLM or speech API is required for the demo path.
