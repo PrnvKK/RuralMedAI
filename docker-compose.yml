@@ -16,70 +16,6 @@ services:
       timeout: 5s
       retries: 5
 
-  gemma-models:
-    image: curlimages/curl:8.11.1
-    container_name: parchee-gemma-models
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -eu
-        mkdir -p /models
-        if [ ! -s /models/gemma-4.gguf ]; then
-          echo "Downloading Gemma 4 model..."
-          curl -L --fail --retry 5 --retry-delay 5 -o /models/gemma-4.gguf "$$LLAMA_SERVER_MODEL_URL"
-        else
-          echo "Gemma 4 model already present."
-        fi
-        if [ ! -s /models/mmproj.gguf ]; then
-          echo "Downloading Gemma 4 mmproj..."
-          curl -L --fail --retry 5 --retry-delay 5 -o /models/mmproj.gguf "$$LLAMA_SERVER_MMPROJ_URL"
-        else
-          echo "Gemma 4 mmproj already present."
-        fi
-    environment:
-      LLAMA_SERVER_MODEL_URL: ${LLAMA_SERVER_MODEL_URL:-https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf?download=true}
-      LLAMA_SERVER_MMPROJ_URL: ${LLAMA_SERVER_MMPROJ_URL:-https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf?download=true}
-    volumes:
-      - llama_models:/models
-
-  llama-server:
-    image: ${LLAMA_CPP_DOCKER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
-    container_name: parchee-llama-server
-    # Uncomment the line below and set LLAMA_CPP_DOCKER_IMAGE to server-cuda for GPU
-    # gpus: all
-    command:
-      - -m
-      - /models/gemma-4.gguf
-      - --mmproj
-      - /models/mmproj.gguf
-      - --chat-template-file
-      - /templates/gemma4_no_think.jinja
-      - --reasoning
-      - "off"
-      - --reasoning-budget
-      - "0"
-      - --ctx-size
-      - ${LLAMA_SERVER_CTX_SIZE:-2048}
-      - -t
-      - ${LLAMA_SERVER_THREADS:-4}
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8085"
-      - --n-gpu-layers
-      - ${LLAMA_SERVER_N_GPU_LAYERS:-999}
-    environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    ports:
-      - "8085:8085"
-    volumes:
-      - llama_models:/models:ro
-      - ./backend/llama_templates:/templates:ro
-    depends_on:
-      gemma-models:
-        condition: service_completed_successfully
-
   backend:
     build:
       context: .
@@ -90,12 +26,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ruralmed}
       AES_256_KEY: ${AES_256_KEY}
       HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
-      LLAMA_CPP_MODE: auto
-      LLAMA_CPP_BASE_URL: http://llama-server:8085
-      LLAMA_CPP_MODEL_NAME: gemma-4
-      LLAMA_CPP_TIMEOUT_SECONDS: ${LLAMA_CPP_TIMEOUT_SECONDS:-180}
-      LLAMA_CPP_MAX_TOKENS: ${LLAMA_CPP_MAX_TOKENS:-512}
-      LLAMA_SERVER_AUTOSTART: "false"
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_TRANSCRIBE_MODEL: ${GEMINI_TRANSCRIBE_MODEL:-gemini-3.5-transcribe}
+      GEMINI_EXTRACT_MODEL: ${GEMINI_EXTRACT_MODEL:-gemini-3.5-flash}
+      GEMINI_TIMEOUT_SECONDS: ${GEMINI_TIMEOUT_SECONDS:-60}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8003:8003"
@@ -104,8 +38,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      llama-server:
-        condition: service_started
 
   frontend:
     build:
@@ -126,4 +58,3 @@ services:
 volumes:
   postgres_data:
   backend_data:
-  llama_models:
