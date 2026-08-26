@@ -1,9 +1,0 @@
-{%- for message in messages -%}
-{%- set role = message['role'] -%}
-{%- if role == 'assistant' -%}
-{%- set role = 'model' -%}
-{%- endif -%}
-<|turn>{{ role }}
-{{ message['content'] }}<turn|>
-{%- endfor -%}
-<|turn>model
