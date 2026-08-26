@@ -7,23 +7,22 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.llama_cpp_gemma_service import LlamaCppGemmaService
-from app.services.llama_server_manager import LlamaServerManager
+from app.api.ehr import router as ehr_router
+from app.api.routes import router as api_router
+from app.services.gemini_transcribe_service import GeminiTranscribeService
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-llama_server = LlamaServerManager()
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.database import init_db
     from app.services.icd_coding_service import ICDCodingService
     from app.services.procedure_coding_service import ProcedureCodingService
 
-    await llama_server.start()
-    from app.database import init_db
     logger.info("Initializing database...")
     init_db()
 
@@ -39,13 +38,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await llama_server.stop()
+        logger.info("Shutting down")
 
 
 app = FastAPI(title="Parchee Edge Backend", lifespan=lifespan)
-
-from app.api.routes import router as api_router
-from app.api.ehr import router as ehr_router
 
 app.include_router(api_router, prefix="/api")
 app.include_router(ehr_router, prefix="/api/ehr")
@@ -66,12 +62,12 @@ async def health_check():
 
 @app.websocket("/ws/live-consultation")
 async def websocket_endpoint(websocket: WebSocket):
-    """Route live consultation audio to local Gemma 4 through llama.cpp."""
+    """Route live consultation audio to Gemini 3.5 Transcribe + extraction."""
     await websocket.accept()
     logger.info("New WebSocket connection accepted")
 
     try:
-        service = LlamaCppGemmaService()
+        service = GeminiTranscribeService()
         await service.handle_session(websocket)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")

@@ -51,13 +51,13 @@ PROCEDURES
 async def generate_clinical_note(data: PatientData):
     """
     Receives structured PatientData and returns a clinician-reviewable note.
-    Uses local Gemma 4 through llama.cpp, with deterministic formatting fallback.
+    Uses Gemini 3.5 Flash via the Gemini API, with deterministic formatting fallback.
     """
     try:
         from app.services.summarizer import generate_clinical_note_async
 
         note = await generate_clinical_note_async(data.model_dump())
         return {"note": note or _fallback_note(data)}
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
