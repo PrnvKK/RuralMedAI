@@ -6,7 +6,6 @@ import {
     Stethoscope,
     HeartPulse,
     ClipboardList,
-    Activity,
     ChevronRight,
     Search,
     Receipt
