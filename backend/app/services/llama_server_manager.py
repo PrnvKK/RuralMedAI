@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.services.hardware_profiles import detect_profile
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,32 +28,24 @@ def _path_from_env(name: str, default: Path) -> Path:
 
 @dataclass
 class LlamaServerConfig:
+    hardware_profile: str = os.getenv("PARCHEE_HARDWARE_PROFILE", "auto")
     autostart: bool = os.getenv("LLAMA_SERVER_AUTOSTART", "true").lower() == "true"
     host: str = os.getenv("LLAMA_SERVER_HOST", "127.0.0.1")
     port: int = int(os.getenv("LLAMA_SERVER_PORT", "8085"))
-    binary_path: Path = _path_from_env(
-        "LLAMA_SERVER_BINARY",
-        _repo_backend_dir() / "llama_cpp" / "bin" / "llama-server.exe",
-    )
+    binary_path: Optional[Path] = _path_from_env("LLAMA_SERVER_BINARY", Path("")) if os.getenv("LLAMA_SERVER_BINARY") else None
     model_path: Path = _path_from_env(
         "LLAMA_SERVER_MODEL",
-        _repo_backend_dir() / "llama_cpp" / "models" / "gemma-4.gguf",
+        _repo_backend_dir() / "llama_cpp" / "models" / "gemma-3-4b-it-Q4_K_M.gguf",
     )
-    mmproj_path: Optional[Path] = (
-        _path_from_env(
-            "LLAMA_SERVER_MMPROJ",
-            _repo_backend_dir() / "llama_cpp" / "models" / "mmproj.gguf",
-        )
-        if os.getenv("LLAMA_SERVER_MMPROJ")
-        else _repo_backend_dir() / "llama_cpp" / "models" / "mmproj.gguf"
-    )
+    # The live scribe is text-only after Whisper ASR; a projector is unnecessary.
+    mmproj_path: Optional[Path] = _path_from_env("LLAMA_SERVER_MMPROJ", Path("")) if os.getenv("LLAMA_SERVER_MMPROJ") else None
     model_repo: str = os.getenv(
         "LLAMA_SERVER_MODEL_REPO",
-        "unsloth/gemma-4-E2B-it-GGUF",
+        "unsloth/gemma-3-4b-it-GGUF",
     )
     model_filename: str = os.getenv(
         "LLAMA_SERVER_MODEL_FILENAME",
-        "gemma-4-E2B-it-Q4_K_M.gguf",
+        "gemma-3-4b-it-Q4_K_M.gguf",
     )
     mmproj_repo: str = os.getenv(
         "LLAMA_SERVER_MMPROJ_REPO",
@@ -63,25 +57,39 @@ class LlamaServerConfig:
     )
     model_url: str = os.getenv(
         "LLAMA_SERVER_MODEL_URL",
-        "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf?download=true",
+        "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf?download=true",
     )
     mmproj_url: str = os.getenv(
         "LLAMA_SERVER_MMPROJ_URL",
         "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf?download=true",
     )
     download_models: bool = os.getenv("LLAMA_SERVER_DOWNLOAD_MODELS", "true").lower() == "true"
-    chat_template_path: Path = _path_from_env(
-        "LLAMA_SERVER_CHAT_TEMPLATE",
-        _repo_backend_dir() / "llama_templates" / "gemma4_no_think.jinja",
-    )
+    chat_template_path: Optional[Path] = _path_from_env("LLAMA_SERVER_CHAT_TEMPLATE", Path("")) if os.getenv("LLAMA_SERVER_CHAT_TEMPLATE") else None
     ctx_size: int = int(os.getenv("LLAMA_SERVER_CTX_SIZE", "4096"))
     threads: int = int(os.getenv("LLAMA_SERVER_THREADS", "8"))
     batch_size: int = int(os.getenv("LLAMA_SERVER_BATCH_SIZE", "2048"))
     ubatch_size: int = int(os.getenv("LLAMA_SERVER_UBATCH_SIZE", "256"))
     flash_attn: bool = os.getenv("LLAMA_SERVER_FLASH_ATTN", "true").lower() == "true"
     numa: bool = os.getenv("LLAMA_SERVER_NUMA", "true").lower() == "true"
-    n_gpu_layers: int = int(os.getenv("LLAMA_SERVER_N_GPU_LAYERS", "0"))
+    n_gpu_layers: Optional[int] = int(os.getenv("LLAMA_SERVER_N_GPU_LAYERS")) if os.getenv("LLAMA_SERVER_N_GPU_LAYERS") else None
     extra_args: str = os.getenv("LLAMA_SERVER_EXTRA_ARGS", "")
+    memory_budget_gb: Optional[float] = float(os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB")) if os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB") else None
+
+    def __post_init__(self):
+        # Preserve a legacy/custom explicit binary instead of auto-detecting a
+        # different accelerator and creating a runtime mismatch.
+        requested = self.hardware_profile
+        if requested == "auto" and self.binary_path is not None:
+            names = {path.name.lower() for path in self.binary_path.parent.glob("*.dll")}
+            requested = "vulkan" if any("vulkan" in name or "-vk" in name for name in names) else "cuda" if any("cuda" in name for name in names) else "cpu"
+        profile = detect_profile(requested)
+        self.hardware_profile = profile.name
+        if self.binary_path is None:
+            runtime = _repo_backend_dir() / "llama_cpp" / "runtimes" / profile.name / "llama-server.exe"
+            legacy = _repo_backend_dir() / "llama_cpp" / "bin" / "llama-server.exe"
+            self.binary_path = runtime if runtime.exists() or not legacy.exists() else legacy
+        if self.n_gpu_layers is None:
+            self.n_gpu_layers = profile.gpu_layers
 
 
 class LlamaServerManager:
@@ -108,21 +116,16 @@ class LlamaServerManager:
         command = self._build_command()
         logger.info("Starting llama-server: %s", " ".join(str(part) for part in command))
 
-        # Warn if GPU offload requested but no Vulkan DLLs present
+        # Fail early on a profile/runtime mismatch instead of silently using CPU.
         if self.config.n_gpu_layers > 0:
-            has_vulkan = any(
-                (self.config.binary_path.parent / f).exists()
-                for f in ("ggml-vulkan.dll", "ggml-vk.dll")
-            )
-            if has_vulkan:
-                logger.info("Vulkan GPU offload: %d layers", self.config.n_gpu_layers)
-            else:
-                logger.warning(
-                    "LLAMA_SERVER_N_GPU_LAYERS=%d but no Vulkan DLLs found — running CPU only. "
-                    "Download Vulkan build for GPU offload: "
-                    "https://github.com/ggml-org/llama.cpp/releases",
-                    self.config.n_gpu_layers,
+            expected_dll = {"vulkan": ("ggml-vulkan.dll", "ggml-vk.dll"), "cuda": ("ggml-cuda.dll",)}.get(self.config.hardware_profile)
+            if expected_dll and not any((self.config.binary_path.parent / name).exists() for name in expected_dll):
+                raise RuntimeError(
+                    f"{self.config.hardware_profile} profile selected but its runtime DLLs are missing beside "
+                    f"{self.config.binary_path}. Run `python scripts/setup.py --profile {self.config.hardware_profile}` "
+                    "or use PARCHEE_HARDWARE_PROFILE=custom with a matching LLAMA_SERVER_BINARY."
                 )
+            logger.info("%s GPU offload: %d layers", self.config.hardware_profile, self.config.n_gpu_layers)
 
         self.process = subprocess.Popen(
             command,
@@ -152,7 +155,6 @@ class LlamaServerManager:
         required = [
             self.config.binary_path,
             self.config.model_path,
-            self.config.chat_template_path,
         ]
         if self.config.mmproj_path:
             required.append(self.config.mmproj_path)
@@ -166,6 +168,17 @@ class LlamaServerManager:
                 + "\n  python scripts/setup.py"
             )
             raise FileNotFoundError(msg)
+        if self.config.ctx_size < 1024:
+            raise ValueError("LLAMA_SERVER_CTX_SIZE must be at least 1024 tokens")
+        if self.config.model_path.suffix.lower() != ".gguf":
+            raise ValueError(f"LLAMA_SERVER_MODEL must be a GGUF file: {self.config.model_path}")
+        model_gb = self.config.model_path.stat().st_size / (1024 ** 3)
+        if self.config.memory_budget_gb is not None and model_gb > self.config.memory_budget_gb:
+            raise ValueError(
+                f"Model is {model_gb:.1f} GB but LLAMA_SERVER_MEMORY_BUDGET_GB is "
+                f"{self.config.memory_budget_gb:.1f} GB. Choose a smaller quantization or increase the budget."
+            )
+        logger.info("GGUF preflight: %s (%.1f GB), context %d, profile %s", self.config.model_path.name, model_gb, self.config.ctx_size, self.config.hardware_profile)
 
     def _ensure_model_files(self):
         if not self.config.download_models:
@@ -176,7 +189,7 @@ class LlamaServerManager:
             repo_id=self.config.model_repo,
             filename=self.config.model_filename,
             fallback_url=self.config.model_url,
-            label="Gemma 4 model",
+            label="Gemma 3 4B model",
         )
         if self.config.mmproj_path:
             self._download_model(
@@ -208,7 +221,6 @@ class LlamaServerManager:
             cached = hf_hub_download(
                 repo_id=repo_id,
                 filename=filename,
-                resume=True,
             )
             shutil.copy2(cached, target)
             logger.info("%s cached at %s, copied to %s", label, cached, target)
@@ -255,22 +267,14 @@ class LlamaServerManager:
         logger.info("Finished downloading %s", label)
 
     def _build_command(self):
+        assert self.config.binary_path is not None
         command = [
             str(self.config.binary_path),
             "-m",
             str(self.config.model_path),
         ]
-        if self.config.mmproj_path:
-            command.extend(["--mmproj", str(self.config.mmproj_path)])
-
         command.extend(
             [
-                "--chat-template-file",
-                str(self.config.chat_template_path),
-                "--reasoning",
-                "off",
-                "--reasoning-budget",
-                "0",
                 "--ctx-size",
                 str(self.config.ctx_size),
                 "-t",
@@ -283,6 +287,7 @@ class LlamaServerManager:
                 str(self.config.batch_size),
                 "--ubatch-size",
                 str(self.config.ubatch_size),
+                "--no-webui",
             ]
         )
         if self.config.flash_attn:
