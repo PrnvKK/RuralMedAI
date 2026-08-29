@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, CheckCircle2, CircleX, RefreshCw } from 'lucide-react';
+import { CheckCircle2, CircleX, RefreshCw } from 'lucide-react';
 import { PatientData, TranscriptItem } from '@/types';
 import { loadScribeSession } from '@/lib/sessionStore';
 import {
@@ -13,6 +12,12 @@ import {
 } from '@/lib/claimsEngine';
 import { API } from '@/lib/api';
 
+// EHR rows returned by the patients endpoint: PatientData plus the DB
+// bookkeeping fields that are not part of the clinical payload.
+interface ArchivedPatient extends PatientData {
+    created_at?: string;
+}
+
 function cx(...values: Array<string | false | null | undefined>) {
     return values.filter(Boolean).join(' ');
 }
@@ -22,7 +27,7 @@ export default function ClaimsPage() {
     const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
     const [lastSyncedAt, setLastSyncedAt] = useState<string>('Not synced');
     const [selectedSchemeId, setSelectedSchemeId] = useState<string | null>(null);
-    const [archivedPatients, setArchivedPatients] = useState<any[]>([]);
+    const [archivedPatients, setArchivedPatients] = useState<ArchivedPatient[]>([]);
     const [selectedPatientKey, setSelectedPatientKey] = useState<string>('live');
     const [documentChecks, setDocumentChecks] = useState<Record<string, Record<string, boolean>>>({});
 
@@ -67,8 +72,13 @@ export default function ClaimsPage() {
     }, [selectedPatientKey]);
 
     useEffect(() => {
-        hydrateFromSession();
-        loadArchivedPatients();
+        // Defer the initial hydrate so the effect body does not call setState
+        // synchronously (react-hooks/set-state-in-effect); the interval and the
+        // storage listener below keep the form fresh afterwards.
+        const initial = window.setTimeout(() => {
+            hydrateFromSession();
+            loadArchivedPatients();
+        }, 0);
 
         const interval = window.setInterval(hydrateFromSession, 2500);
         const onStorage = (event: StorageEvent) => {
@@ -80,6 +90,7 @@ export default function ClaimsPage() {
         window.addEventListener('storage', onStorage);
 
         return () => {
+            window.clearTimeout(initial);
             window.clearInterval(interval);
             window.removeEventListener('storage', onStorage);
         };
@@ -87,17 +98,26 @@ export default function ClaimsPage() {
 
     useEffect(() => {
         if (selectedPatientKey === 'live') {
-            hydrateFromSession();
-            return;
+            // Deferred so the effect body does not call setState synchronously.
+            const initial = window.setTimeout(hydrateFromSession, 0);
+            return () => window.clearTimeout(initial);
         }
+    }, [selectedPatientKey, hydrateFromSession]);
 
+    // Resolve the selected archived record during render so switching between
+    // the live session and an EHR archive does not need an effect that syncs
+    // state (react-hooks/set-state-in-effect).
+    const selectedArchivedRecord = useMemo(() => {
+        if (selectedPatientKey === 'live') return null;
         const patientId = Number.parseInt(selectedPatientKey.replace('ehr-', ''), 10);
-        if (Number.isNaN(patientId)) return;
+        if (Number.isNaN(patientId)) return null;
+        return archivedPatients.find((item) => item.id === patientId) ?? null;
+    }, [selectedPatientKey, archivedPatients]);
 
-        const record = archivedPatients.find((item) => item.id === patientId);
-        if (!record) return;
-
-        const mapped: PatientData = {
+    const mappedArchivedPatient = useMemo<PatientData | null>(() => {
+        if (!selectedArchivedRecord) return null;
+        const record = selectedArchivedRecord;
+        return {
             id: record.id,
             name: record.name,
             age: record.age,
@@ -124,32 +144,37 @@ export default function ClaimsPage() {
                 spo2: record.vitals?.spo2,
             },
         };
+    }, [selectedArchivedRecord]);
 
-        setPatientData(mapped);
-        setTranscript([]);
-        setLastSyncedAt(
-            record.created_at
-                ? new Date(record.created_at).toLocaleString()
-                : `Archive ID ${record.id}`
-        );
-    }, [selectedPatientKey, archivedPatients, hydrateFromSession]);
+    const effectivePatientData = mappedArchivedPatient ?? patientData;
+    const effectiveTranscript = useMemo(
+        () => (mappedArchivedPatient ? [] : transcript),
+        [mappedArchivedPatient, transcript]
+    );
+    const effectiveLastSyncedAt = selectedArchivedRecord
+        ? selectedArchivedRecord.created_at
+            ? new Date(selectedArchivedRecord.created_at).toLocaleString()
+            : `Archive ID ${selectedArchivedRecord.id}`
+        : lastSyncedAt;
 
-    const workspace = useMemo(() => buildEligibilityWorkspace(patientData, transcript), [patientData, transcript]);
+    const workspace = useMemo(
+        () => buildEligibilityWorkspace(effectivePatientData, effectiveTranscript),
+        [effectivePatientData, effectiveTranscript]
+    );
 
-    useEffect(() => {
-        if (!workspace.schemes.length) {
-            setSelectedSchemeId(null);
-            return;
-        }
-
-        if (!selectedSchemeId || !workspace.schemes.some((scheme) => scheme.id === selectedSchemeId)) {
-            setSelectedSchemeId(workspace.schemes[0].id);
-        }
-    }, [workspace.schemes, selectedSchemeId]);
+    // Resolve the effective selection during render instead of syncing state in
+    // an effect: fall back to the first scheme when the user's choice is no
+    // longer present (or when no schemes exist yet).
+    const effectiveSelectedSchemeId =
+        workspace.schemes.length === 0
+            ? null
+            : workspace.schemes.some((scheme) => scheme.id === selectedSchemeId)
+                ? selectedSchemeId
+                : workspace.schemes[0].id;
 
     const selectedScheme = useMemo(
-        () => workspace.schemes.find((scheme) => scheme.id === selectedSchemeId) || null,
-        [workspace.schemes, selectedSchemeId]
+        () => workspace.schemes.find((scheme) => scheme.id === effectiveSelectedSchemeId) || null,
+        [workspace.schemes, effectiveSelectedSchemeId]
     );
 
     const handleRefresh = async () => {
@@ -200,7 +225,7 @@ export default function ClaimsPage() {
 
                 <div className="flex items-center gap-4">
                     <div className="text-[9px] font-mono font-bold text-primary/40 uppercase tracking-widest bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/10">
-                        Sync: {lastSyncedAt}
+                        Sync: {effectiveLastSyncedAt}
                     </div>
                     <button
                         onClick={handleRefresh}
@@ -239,7 +264,7 @@ export default function ClaimsPage() {
                                     key={scheme.id}
                                     scheme={scheme}
                                     checkedDocumentCount={getCheckedDocumentsCount(scheme)}
-                                    selected={scheme.id === selectedSchemeId}
+                                    selected={scheme.id === effectiveSelectedSchemeId}
                                     onSelect={() => setSelectedSchemeId(scheme.id)}
                                 />
                             ))}
