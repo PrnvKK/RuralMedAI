@@ -32,6 +32,8 @@ pitch_deck_images/
 *.download
 backend/llama_cpp/bin/
 backend/llama_cpp/models/
+backend/llama_cpp/runtimes/
+backend/whisper_cpp/
 backend/data/chroma/
 backend/data/tfidf_cache/
 backend/data/
