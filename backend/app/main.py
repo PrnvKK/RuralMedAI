@@ -3,9 +3,14 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+# Load the portable local configuration before services read environment defaults.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from app.services.llama_cpp_gemma_service import LlamaCppGemmaService
 from app.services.llama_server_manager import LlamaServerManager
@@ -66,7 +71,7 @@ async def health_check():
 
 @app.websocket("/ws/live-consultation")
 async def websocket_endpoint(websocket: WebSocket):
-    """Route live consultation audio to local Gemma 4 through llama.cpp."""
+    """Route browser PCM through local Whisper ASR and Gemma form extraction."""
     await websocket.accept()
     logger.info("New WebSocket connection accepted")
 
