@@ -5,7 +5,7 @@ import { useSocket } from '@/hooks/useSocket';
 import { AudioChunk, useAudioStream } from '@/hooks/useAudioStream';
 import { LiveForm } from '@/components/LiveForm';
 import { AudioVisualizer } from '@/components/AudioVisualizer';
-import { PatientData, TranscriptItem } from '@/types';
+import { PatientData, TranscriptItem, LiveScribeMessage } from '@/types';
 import { Mic, Square, Save, RefreshCw, FileText, Eraser, Clock3, Plus, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -115,7 +115,6 @@ export default function Home() {
     const [entryMode, setEntryMode] = useState<'create' | 'update'>('create');
     const [formInstanceKey, setFormInstanceKey] = useState(0);
     const [sessionHydrated, setSessionHydrated] = useState(false);
-    const [sessionSyncedAt, setSessionSyncedAt] = useState<string | null>(null);
 
     const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -140,7 +139,6 @@ export default function Home() {
             setEntryMode(snapshot.entryMode || (restoredId ? 'update' : 'create'));
             setPatientData(snapshot.patientData || {});
             setTranscript(Array.isArray(snapshot.transcript) ? snapshot.transcript : []);
-            setSessionSyncedAt(new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
         }
         setSessionHydrated(true);
     }, []);
@@ -156,7 +154,6 @@ export default function Home() {
             entryMode,
             updatedAt
         });
-        setSessionSyncedAt(nowClock());
     }, [patientData, transcript, activePatientId, entryMode, sessionHydrated]);
 
     useEffect(() => {
@@ -165,7 +162,7 @@ export default function Home() {
         }
     }, [transcript]);
 
-    const handleMessage = useCallback((data: any) => {
+    const handleMessage = useCallback((data: LiveScribeMessage) => {
         const ts = nowClock();
         console.log('[WS MSG]', data.type, data.field || '', typeof data.value === 'string' ? (data.value as string).slice(0, 40) : '');
 
@@ -177,7 +174,8 @@ export default function Home() {
         }
 
         if (data.type === 'update' && data.field) {
-            setPatientData(prev => applyPatientUpdate(prev, data.field, data.value));
+            const field = data.field;
+            setPatientData(prev => applyPatientUpdate(prev, field, data.value));
             setTranscript(prev => ([
                 ...prev,
                 {
@@ -294,7 +292,6 @@ export default function Home() {
         setFormInstanceKey((prev) => prev + 1);
         setTranscript([]);
         clearScribeSession();
-        setSessionSyncedAt(null);
     };
 
     const handleStartNewEntry = async () => {
@@ -339,7 +336,8 @@ export default function Home() {
             setEntryMode('create');
             setPatientData(prev => {
                 if (prev.id === undefined) return prev;
-                const { id, ...rest } = prev;
+                const rest = { ...prev };
+                delete rest.id;
                 return rest;
             });
             return;
@@ -375,13 +373,15 @@ export default function Home() {
             const payload: PatientData = isUpdate && activePatientId
                 ? { ...currentData, id: activePatientId }
                 : (() => {
-                    const { id, ...rest } = currentData;
+                    const rest = { ...currentData };
+                    delete rest.id;
                     return rest;
                 })();
             const updateEndpoint = activePatientId ? `${API.EHR}/patients/${activePatientId}` : '';
             const createEndpoint = `${API.EHR}/commit`;
             const createPayload = (() => {
-                const { id, ...rest } = payload;
+                const rest = { ...payload };
+                delete rest.id;
                 return rest;
             })();
 
