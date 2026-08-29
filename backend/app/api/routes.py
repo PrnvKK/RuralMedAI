@@ -51,7 +51,7 @@ PROCEDURES
 async def generate_clinical_note(data: PatientData):
     """
     Receives structured PatientData and returns a clinician-reviewable note.
-    Uses local Gemma 4 through llama.cpp, with deterministic formatting fallback.
+    Uses local Gemma through llama.cpp, with deterministic formatting fallback.
     """
     try:
         from app.services.summarizer import generate_clinical_note_async
