@@ -1,4 +1,5 @@
 """Hardware-profile defaults shared by local setup and llama-server startup."""
+
 from __future__ import annotations
 
 import ctypes

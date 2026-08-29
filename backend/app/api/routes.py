@@ -58,6 +58,6 @@ async def generate_clinical_note(data: PatientData):
 
         note = await generate_clinical_note_async(data.model_dump())
         return {"note": note or _fallback_note(data)}
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

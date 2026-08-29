@@ -69,9 +69,11 @@ class ProcedureCodingService:
 
         logger.info("ProcedureCodingService: attaching shared embedding model …")
         from app.services.shared_embedder import get_embedder
+
         self._embedder = get_embedder()
 
         import chromadb
+
         self._chroma = chromadb.PersistentClient(path=_CHROMA_PCS_DIR)
         self._col = self._chroma.get_or_create_collection(
             name=_COLLECTION_NAME,
@@ -93,11 +95,9 @@ class ProcedureCodingService:
                 self._col.count(),
             )
 
-        logger.info(
-            "ProcedureCodingService: building TF-IDF index (%d codes) …", len(self._codes)
-        )
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        logger.info("ProcedureCodingService: building TF-IDF index (%d codes) …", len(self._codes))
         import joblib
+        from sklearn.feature_extraction.text import TfidfVectorizer
 
         _cache_prefix = _DATA_DIR / "tfidf_cache" / f"icd_pcs_{len(self._codes)}"
         _cache_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -113,9 +113,7 @@ class ProcedureCodingService:
             self._tfidf = TfidfVectorizer(ngram_range=(1, 2), min_df=1, sublinear_tf=True)
             self._tfidf_matrix = self._tfidf.fit_transform(self._descs)
             # Character-level n-gram TF-IDF — enables partial word / typo matching
-            self._char_tfidf = TfidfVectorizer(
-                analyzer="char_wb", ngram_range=(3, 4), min_df=1, sublinear_tf=True
-            )
+            self._char_tfidf = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 4), min_df=1, sublinear_tf=True)
             self._char_tfidf_matrix = self._char_tfidf.fit_transform(self._descs)
             joblib.dump((self._tfidf, self._tfidf_matrix), _word_path)
             joblib.dump((self._char_tfidf, self._char_tfidf_matrix), _char_path)
@@ -125,19 +123,16 @@ class ProcedureCodingService:
         self._nlp = None
         try:
             import spacy
+
             self._nlp = spacy.load("en_core_sci_md")
             logger.info("ProcedureCodingService: scispacy en_core_sci_md loaded")
         except Exception as exc:
-            logger.warning(
-                "ProcedureCodingService: scispacy unavailable (%s) — entity tier skipped", exc
-            )
+            logger.warning("ProcedureCodingService: scispacy unavailable (%s) — entity tier skipped", exc)
 
         logger.info("ProcedureCodingService: ready")
 
     def _download_pcs_file(self) -> None:
-        logger.info(
-            "ProcedureCodingService: downloading ICD-10-PCS FY2025 order file from CMS …"
-        )
+        logger.info("ProcedureCodingService: downloading ICD-10-PCS FY2025 order file from CMS …")
         try:
             response = requests.get(_CMS_PCS_URL, timeout=120, stream=True)
             response.raise_for_status()
@@ -154,8 +149,7 @@ class ProcedureCodingService:
             logger.info("ProcedureCodingService: ICD-10-PCS order file saved to %s", _PCS_TXT_PATH)
         except Exception as exc:
             logger.error(
-                "ProcedureCodingService: failed to download ICD-10-PCS file: %s. "
-                "Procedure coding will be unavailable.",
+                "ProcedureCodingService: failed to download ICD-10-PCS file: %s. Procedure coding will be unavailable.",
                 exc,
             )
             raise
@@ -210,13 +204,15 @@ class ProcedureCodingService:
         return codes, descs
 
     def _populate(self) -> None:
-        logger.info(
-            "ProcedureCodingService: first-run — populating ChromaDB from ICD-10-PCS …"
-        )
+        logger.info("ProcedureCodingService: first-run — populating ChromaDB from ICD-10-PCS …")
         total = len(self._codes)
 
-        logger.info("ProcedureCodingService: computing embeddings for %d codes (this may take a few minutes on first run) …", total)
+        logger.info(
+            "ProcedureCodingService: computing embeddings for %d codes (this may take a few minutes on first run) …",
+            total,
+        )
         from app.services.shared_embedder import encode_with_progress
+
         embeddings = encode_with_progress(self._descs, batch_size=512, label="ICD-PCS embeddings")
 
         logger.info("ProcedureCodingService: embeddings complete, upserting to ChromaDB …")
@@ -232,10 +228,7 @@ class ProcedureCodingService:
                 ids=batch_codes,
                 documents=batch_descs,
                 embeddings=batch_embs,
-                metadatas=[
-                    {"code": c, "description": d}
-                    for c, d in zip(batch_codes, batch_descs)
-                ],
+                metadatas=[{"code": c, "description": d} for c, d in zip(batch_codes, batch_descs)],
             )
             # More frequent logging (every 5 batches)
             if (start // batch_size) % 5 == 0 or end == total:
@@ -292,16 +285,26 @@ class ProcedureCodingService:
         # Exact single-code lookup — return immediately if user typed a full code
         for code, desc in zip(self._codes, self._descs):
             if code.upper() == normalised:
-                return [ProcedureSuggestion(
-                    code=code, description=desc, confidence=1.0, source="exact",
-                )]
+                return [
+                    ProcedureSuggestion(
+                        code=code,
+                        description=desc,
+                        confidence=1.0,
+                        source="exact",
+                    )
+                ]
 
         prefix_hits: list[ProcedureSuggestion] = []
         for code, desc in zip(self._codes, self._descs):
             if code.upper().startswith(normalised):
-                prefix_hits.append(ProcedureSuggestion(
-                    code=code, description=desc, confidence=1.0, source="exact",
-                ))
+                prefix_hits.append(
+                    ProcedureSuggestion(
+                        code=code,
+                        description=desc,
+                        confidence=1.0,
+                        source="exact",
+                    )
+                )
                 if len(prefix_hits) >= top_k:
                     break
         if prefix_hits:
@@ -370,9 +373,14 @@ class ProcedureCodingService:
             substr_boost = 0.15 if ql in desc.lower() else 0.0
             hybrid = round(min(0.4 * kw + 0.3 * ch + 0.3 * sem + substr_boost, 1.0), 4)
             if hybrid > 0:
-                merged.append(ProcedureSuggestion(
-                    code=code, description=desc, confidence=hybrid, source="hybrid",
-                ))
+                merged.append(
+                    ProcedureSuggestion(
+                        code=code,
+                        description=desc,
+                        confidence=hybrid,
+                        source="hybrid",
+                    )
+                )
 
         merged.sort(key=lambda s: s.confidence, reverse=True)
         return merged[:top_k]
@@ -381,9 +389,7 @@ class ProcedureCodingService:
     # Internal tiers
     # ------------------------------------------------------------------
 
-    def _tier1_semantic(
-        self, text: str, top_k: int, results: dict[str, ProcedureSuggestion]
-    ) -> None:
+    def _tier1_semantic(self, text: str, top_k: int, results: dict[str, ProcedureSuggestion]) -> None:
         embedding = self._embedder.encode([text], show_progress_bar=False).tolist()[0]
         n = min(top_k, self._col.count())
         if n == 0:
@@ -404,9 +410,7 @@ class ProcedureCodingService:
                     source="semantic",
                 )
 
-    def _tier2_entity(
-        self, text: str, results: dict[str, ProcedureSuggestion]
-    ) -> None:
+    def _tier2_entity(self, text: str, results: dict[str, ProcedureSuggestion]) -> None:
         try:
             doc = self._nlp(text[:512])
             seen: set[str] = set()
@@ -434,9 +438,7 @@ class ProcedureCodingService:
         except Exception as exc:
             logger.warning("ProcedureCodingService._tier2_entity: %s", exc)
 
-    def _tier3_tfidf(
-        self, text: str, top_k: int, results: dict[str, ProcedureSuggestion]
-    ) -> None:
+    def _tier3_tfidf(self, text: str, top_k: int, results: dict[str, ProcedureSuggestion]) -> None:
         try:
             query_vec = self._tfidf.transform([text])
             scores = (self._tfidf_matrix @ query_vec.T).toarray().flatten()

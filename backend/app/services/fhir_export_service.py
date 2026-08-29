@@ -4,7 +4,6 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-
 FHIR_BASE_URL = "https://parchee.local/fhir"
 ICD10_CM_SYSTEM = "http://hl7.org/fhir/sid/icd-10-cm"
 ICD10_PCS_SYSTEM = "http://www.cms.gov/Medicare/Coding/ICD10"
@@ -169,9 +168,7 @@ def _conditions(patient: dict[str, Any], patient_id: str, encounter_id: str) -> 
                 ],
             )
         ):
-            conditions.append(
-                _condition(f"condition-{patient_id}-text-{idx + 1}", patient_id, encounter_id, str(text))
-            )
+            conditions.append(_condition(f"condition-{patient_id}-text-{idx + 1}", patient_id, encounter_id, str(text)))
     return conditions
 
 
@@ -230,14 +227,18 @@ def _procedures(patient: dict[str, Any], patient_id: str, encounter_id: str) -> 
         if not text:
             continue
         seen_texts.add(text.lower())
-        resources.append(_procedure(f"procedure-{patient_id}-{idx + 1}", patient_id, encounter_id, text, code=code or None))
+        resources.append(
+            _procedure(f"procedure-{patient_id}-{idx + 1}", patient_id, encounter_id, text, code=code or None)
+        )
 
     for procedure in patient.get("procedures") or []:
         text = str(procedure).strip()
         if not text or text.lower() in seen_texts:
             continue
         seen_texts.add(text.lower())
-        resources.append(_procedure(f"procedure-{patient_id}-text-{len(resources) + 1}", patient_id, encounter_id, text))
+        resources.append(
+            _procedure(f"procedure-{patient_id}-text-{len(resources) + 1}", patient_id, encounter_id, text)
+        )
 
     return resources
 
@@ -338,9 +339,4 @@ def _gender(value: Any) -> str | None:
 
 def _escape(value: Any) -> str:
     text = str(value or "")
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")

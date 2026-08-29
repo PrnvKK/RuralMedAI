@@ -51,8 +51,10 @@ Summarize the doctor-patient transcript into concise important points.
 
 Rules:
 - Return Markdown bullets only.
-- Focus on clinical facts, symptoms, vitals, diagnosis stated by the doctor, procedures, medication, plan, and follow-up.
-- Include welfare or claim-readiness facts if present, such as ration card, income, occupation, caste category, housing, and location.
+- Focus on clinical facts, symptoms, vitals, diagnosis stated by the doctor,
+  procedures, medication, plan, and follow-up.
+- Include welfare or claim-readiness facts if present, such as ration card,
+  income, occupation, caste category, housing, and location.
 - Do not provide autonomous medical advice.
 - Do not output chain-of-thought or <think> blocks.
 
@@ -75,7 +77,8 @@ Draft a concise clinical note from this structured encounter.
 
 Rules:
 - Return plain text only.
-- Use clear sections: Patient, Chief Complaint, Vitals, Symptoms, History, Assessment, Medications, Procedures, Claim Readiness.
+- Use clear sections: Patient, Chief Complaint, Vitals, Symptoms, History,
+  Assessment, Medications, Procedures, Claim Readiness.
 - Do not invent missing facts.
 - Label assessment as clinician-review documentation support, not autonomous medical advice.
 - Do not output chain-of-thought or <think> blocks.

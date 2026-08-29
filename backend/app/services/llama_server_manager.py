@@ -32,13 +32,17 @@ class LlamaServerConfig:
     autostart: bool = os.getenv("LLAMA_SERVER_AUTOSTART", "true").lower() == "true"
     host: str = os.getenv("LLAMA_SERVER_HOST", "127.0.0.1")
     port: int = int(os.getenv("LLAMA_SERVER_PORT", "8085"))
-    binary_path: Optional[Path] = _path_from_env("LLAMA_SERVER_BINARY", Path("")) if os.getenv("LLAMA_SERVER_BINARY") else None
+    binary_path: Optional[Path] = (
+        _path_from_env("LLAMA_SERVER_BINARY", Path("")) if os.getenv("LLAMA_SERVER_BINARY") else None
+    )
     model_path: Path = _path_from_env(
         "LLAMA_SERVER_MODEL",
         _repo_backend_dir() / "llama_cpp" / "models" / "gemma-3-4b-it-Q4_K_M.gguf",
     )
     # The live scribe is text-only after Whisper ASR; a projector is unnecessary.
-    mmproj_path: Optional[Path] = _path_from_env("LLAMA_SERVER_MMPROJ", Path("")) if os.getenv("LLAMA_SERVER_MMPROJ") else None
+    mmproj_path: Optional[Path] = (
+        _path_from_env("LLAMA_SERVER_MMPROJ", Path("")) if os.getenv("LLAMA_SERVER_MMPROJ") else None
+    )
     model_repo: str = os.getenv(
         "LLAMA_SERVER_MODEL_REPO",
         "unsloth/gemma-3-4b-it-GGUF",
@@ -64,16 +68,22 @@ class LlamaServerConfig:
         "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf?download=true",
     )
     download_models: bool = os.getenv("LLAMA_SERVER_DOWNLOAD_MODELS", "true").lower() == "true"
-    chat_template_path: Optional[Path] = _path_from_env("LLAMA_SERVER_CHAT_TEMPLATE", Path("")) if os.getenv("LLAMA_SERVER_CHAT_TEMPLATE") else None
+    chat_template_path: Optional[Path] = (
+        _path_from_env("LLAMA_SERVER_CHAT_TEMPLATE", Path("")) if os.getenv("LLAMA_SERVER_CHAT_TEMPLATE") else None
+    )
     ctx_size: int = int(os.getenv("LLAMA_SERVER_CTX_SIZE", "4096"))
     threads: int = int(os.getenv("LLAMA_SERVER_THREADS", "8"))
     batch_size: int = int(os.getenv("LLAMA_SERVER_BATCH_SIZE", "2048"))
     ubatch_size: int = int(os.getenv("LLAMA_SERVER_UBATCH_SIZE", "256"))
     flash_attn: bool = os.getenv("LLAMA_SERVER_FLASH_ATTN", "true").lower() == "true"
     numa: bool = os.getenv("LLAMA_SERVER_NUMA", "true").lower() == "true"
-    n_gpu_layers: Optional[int] = int(os.getenv("LLAMA_SERVER_N_GPU_LAYERS")) if os.getenv("LLAMA_SERVER_N_GPU_LAYERS") else None
+    n_gpu_layers: Optional[int] = (
+        int(os.getenv("LLAMA_SERVER_N_GPU_LAYERS")) if os.getenv("LLAMA_SERVER_N_GPU_LAYERS") else None
+    )
     extra_args: str = os.getenv("LLAMA_SERVER_EXTRA_ARGS", "")
-    memory_budget_gb: Optional[float] = float(os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB")) if os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB") else None
+    memory_budget_gb: Optional[float] = (
+        float(os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB")) if os.getenv("LLAMA_SERVER_MEMORY_BUDGET_GB") else None
+    )
 
     def __post_init__(self):
         # Preserve a legacy/custom explicit binary instead of auto-detecting a
@@ -81,7 +91,13 @@ class LlamaServerConfig:
         requested = self.hardware_profile
         if requested == "auto" and self.binary_path is not None:
             names = {path.name.lower() for path in self.binary_path.parent.glob("*.dll")}
-            requested = "vulkan" if any("vulkan" in name or "-vk" in name for name in names) else "cuda" if any("cuda" in name for name in names) else "cpu"
+            requested = (
+                "vulkan"
+                if any("vulkan" in name or "-vk" in name for name in names)
+                else "cuda"
+                if any("cuda" in name for name in names)
+                else "cpu"
+            )
         profile = detect_profile(requested)
         self.hardware_profile = profile.name
         if self.binary_path is None:
@@ -118,11 +134,14 @@ class LlamaServerManager:
 
         # Fail early on a profile/runtime mismatch instead of silently using CPU.
         if self.config.n_gpu_layers > 0:
-            expected_dll = {"vulkan": ("ggml-vulkan.dll", "ggml-vk.dll"), "cuda": ("ggml-cuda.dll",)}.get(self.config.hardware_profile)
+            expected_dll = {"vulkan": ("ggml-vulkan.dll", "ggml-vk.dll"), "cuda": ("ggml-cuda.dll",)}.get(
+                self.config.hardware_profile
+            )
             if expected_dll and not any((self.config.binary_path.parent / name).exists() for name in expected_dll):
                 raise RuntimeError(
                     f"{self.config.hardware_profile} profile selected but its runtime DLLs are missing beside "
-                    f"{self.config.binary_path}. Run `python scripts/setup.py --profile {self.config.hardware_profile}` "
+                    f"{self.config.binary_path}. Run `python scripts/setup.py "
+                    f"--profile {self.config.hardware_profile}` "
                     "or use PARCHEE_HARDWARE_PROFILE=custom with a matching LLAMA_SERVER_BINARY."
                 )
             logger.info("%s GPU offload: %d layers", self.config.hardware_profile, self.config.n_gpu_layers)
@@ -172,13 +191,19 @@ class LlamaServerManager:
             raise ValueError("LLAMA_SERVER_CTX_SIZE must be at least 1024 tokens")
         if self.config.model_path.suffix.lower() != ".gguf":
             raise ValueError(f"LLAMA_SERVER_MODEL must be a GGUF file: {self.config.model_path}")
-        model_gb = self.config.model_path.stat().st_size / (1024 ** 3)
+        model_gb = self.config.model_path.stat().st_size / (1024**3)
         if self.config.memory_budget_gb is not None and model_gb > self.config.memory_budget_gb:
             raise ValueError(
                 f"Model is {model_gb:.1f} GB but LLAMA_SERVER_MEMORY_BUDGET_GB is "
                 f"{self.config.memory_budget_gb:.1f} GB. Choose a smaller quantization or increase the budget."
             )
-        logger.info("GGUF preflight: %s (%.1f GB), context %d, profile %s", self.config.model_path.name, model_gb, self.config.ctx_size, self.config.hardware_profile)
+        logger.info(
+            "GGUF preflight: %s (%.1f GB), context %d, profile %s",
+            self.config.model_path.name,
+            model_gb,
+            self.config.ctx_size,
+            self.config.hardware_profile,
+        )
 
     def _ensure_model_files(self):
         if not self.config.download_models:

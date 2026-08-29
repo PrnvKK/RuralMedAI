@@ -1,6 +1,7 @@
 """Low-latency consultation pipeline: PCM -> Whisper -> Gemma -> live form."""
-import asyncio
+
 import array
+import asyncio
 import base64
 import json
 import logging
@@ -21,26 +22,45 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE, SAMPLE_WIDTH_BYTES, CHANNELS = 16000, 2, 1
 LIST_FIELDS = {"symptoms"}
 SUPPORTED_FIELDS = {
-    "name", "age", "gender", "chief_complaint", "symptoms", "ration_card_type",
-    "income", "occupation", "caste_category", "housing_type", "location",
-    "tentative_doctor_diagnosis", "vitals.temperature", "vitals.blood_pressure",
-    "vitals.pulse", "vitals.spo2",
+    "name",
+    "age",
+    "gender",
+    "chief_complaint",
+    "symptoms",
+    "ration_card_type",
+    "income",
+    "occupation",
+    "caste_category",
+    "housing_type",
+    "location",
+    "tentative_doctor_diagnosis",
+    "vitals.temperature",
+    "vitals.blood_pressure",
+    "vitals.pulse",
+    "vitals.spo2",
 }
 FLAT_FIELD_MAP = {
-    "blood_pressure": "vitals.blood_pressure", "pulse": "vitals.pulse",
-    "temperature": "vitals.temperature", "spo2": "vitals.spo2",
-    "oxygen_saturation": "vitals.spo2", "saturation": "vitals.spo2",
+    "blood_pressure": "vitals.blood_pressure",
+    "pulse": "vitals.pulse",
+    "temperature": "vitals.temperature",
+    "spo2": "vitals.spo2",
+    "oxygen_saturation": "vitals.spo2",
+    "saturation": "vitals.spo2",
     "tentative_diagnosis": "tentative_doctor_diagnosis",
 }
 FIELD_RE = re.compile(r'"([a-z0-9_]+)"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|\[[^\]]*\])\s*[,}]')
-EXTRACTION_GRAMMAR = r'''root ::= "{" ws (pair (ws "," ws pair)*)? ws "}"
+EXTRACTION_GRAMMAR = r"""root ::= "{" ws (pair (ws "," ws pair)*)? ws "}"
 pair ::= key ws ":" ws value
-key ::= "\"" ("name" | "age" | "gender" | "chief_complaint" | "symptoms" | "blood_pressure" | "pulse" | "temperature" | "spo2" | "oxygen_saturation" | "saturation" | "ration_card_type" | "income" | "occupation" | "caste_category" | "housing_type" | "location" | "tentative_diagnosis") "\""
+key ::= "\"" ("name" | "age" | "gender" | "chief_complaint" | "symptoms" |
+              "blood_pressure" | "pulse" | "temperature" | "spo2" |
+              "oxygen_saturation" | "saturation" | "ration_card_type" |
+              "income" | "occupation" | "caste_category" | "housing_type" |
+              "location" | "tentative_diagnosis") "\""
 value ::= string | number | symptomslist
 string ::= "\"" [^"]* "\""
 number ::= "-"? [0-9]+ ("." [0-9]+)?
 symptomslist ::= "[" ws (string (ws "," ws string)*)? ws "]"
-ws ::= [ \t\n]*'''
+ws ::= [ \t\n]*"""
 
 
 @dataclass
@@ -80,10 +100,14 @@ class LlamaCppGemmaService:
         self._extraction_queue: Optional[asyncio.Queue] = None
         self._workers: List[asyncio.Task] = []
         self._send_lock: Optional[asyncio.Lock] = None
-        self.frame_bytes = max(SAMPLE_WIDTH_BYTES, int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * self.config.vad_frame_ms / 1000))
-        self.pre_speech_bytes = int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * .4)
+        self.frame_bytes = max(
+            SAMPLE_WIDTH_BYTES, int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * self.config.vad_frame_ms / 1000)
+        )
+        self.pre_speech_bytes = int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * 0.4)
         self.max_speech_bytes = self.config.max_speech_seconds * SAMPLE_RATE * SAMPLE_WIDTH_BYTES
-        self.asr_slice_bytes = max(SAMPLE_WIDTH_BYTES, int(self.config.asr_slice_seconds * SAMPLE_RATE * SAMPLE_WIDTH_BYTES))
+        self.asr_slice_bytes = max(
+            SAMPLE_WIDTH_BYTES, int(self.config.asr_slice_seconds * SAMPLE_RATE * SAMPLE_WIDTH_BYTES)
+        )
         self.overlap_bytes = int(self.config.overlap_ms * SAMPLE_RATE * SAMPLE_WIDTH_BYTES / 1000)
         self.min_speech_bytes = int(SAMPLE_RATE * SAMPLE_WIDTH_BYTES * self.config.min_speech_ms / 1000)
 
@@ -101,8 +125,11 @@ class LlamaCppGemmaService:
 
     async def handle_session(self, websocket: Any):
         from fastapi import WebSocketDisconnect
+
         self._start_workers(websocket)
-        await self._safe_send_json(websocket, {"type": "content", "text": "Parchee Edge ready: local Whisper ASR + Gemma extraction.\n"})
+        await self._safe_send_json(
+            websocket, {"type": "content", "text": "Parchee Edge ready: local Whisper ASR + Gemma extraction.\n"}
+        )
         try:
             while True:
                 data = json.loads(await websocket.receive_text())
@@ -154,13 +181,15 @@ class LlamaCppGemmaService:
         if self.buffer:
             await self._drain_vad_frames(websocket, force_all=True)
         chunk = bytes(self.speech_buffer)
-        self.buffer.clear(); self._reset_vad()
+        self.buffer.clear()
+        self._reset_vad()
         if chunk and (force or len(chunk) >= self.min_speech_bytes):
             await self._enqueue_audio(chunk, "final" if final else "flush", final=final)
 
     async def _drain_vad_frames(self, websocket: Any, force_all: bool = False):
         while len(self.buffer) >= self.frame_bytes or (force_all and self.buffer):
-            frame = bytes(self.buffer[:self.frame_bytes]); del self.buffer[:self.frame_bytes]
+            frame = bytes(self.buffer[: self.frame_bytes])
+            del self.buffer[: self.frame_bytes]
             await self._handle_vad_frame(websocket, frame)
 
     async def _handle_vad_frame(self, websocket: Any, frame: bytes):
@@ -171,11 +200,15 @@ class LlamaCppGemmaService:
             if voiced:
                 self.pending_speech_ms += frame_ms
                 if self.pending_speech_ms >= self.config.vad_start_ms:
-                    self.vad_active = True; self.active_speech_ms = frame_ms
-                    self.speech_buffer.extend(self.pre_speech_buffer); self.speech_buffer.extend(frame)
-                else: self._remember_pre_speech(frame)
+                    self.vad_active = True
+                    self.active_speech_ms = frame_ms
+                    self.speech_buffer.extend(self.pre_speech_buffer)
+                    self.speech_buffer.extend(frame)
+                else:
+                    self._remember_pre_speech(frame)
             else:
-                self.pending_speech_ms = 0; self._remember_pre_speech(frame)
+                self.pending_speech_ms = 0
+                self._remember_pre_speech(frame)
             return
         # Active state: emit on forced max duration, end-of-speech silence, or a
         # timed ASR slice (streaming) — whichever fires first.
@@ -197,10 +230,12 @@ class LlamaCppGemmaService:
     def _remember_pre_speech(self, frame: bytes):
         self.pre_speech_buffer.extend(frame)
         if len(self.pre_speech_buffer) > self.pre_speech_bytes:
-            del self.pre_speech_buffer[:-self.pre_speech_bytes]
+            del self.pre_speech_buffer[: -self.pre_speech_bytes]
 
     def _reset_vad(self):
-        self.vad_active = False; self.speech_buffer.clear(); self.pre_speech_buffer.clear()
+        self.vad_active = False
+        self.speech_buffer.clear()
+        self.pre_speech_buffer.clear()
         self.pending_speech_ms = self.trailing_silence_ms = self.active_speech_ms = 0
 
     async def _emit_active_slice(self, reason: str) -> None:
@@ -209,7 +244,7 @@ class LlamaCppGemmaService:
             return
         await self._enqueue_audio(chunk, reason)
         # Keep an audio tail so Whisper does not lose words across a timed cut.
-        tail = self.speech_buffer[-self.overlap_bytes:] if self.overlap_bytes else b""
+        tail = self.speech_buffer[-self.overlap_bytes :] if self.overlap_bytes else b""
         self.speech_buffer = bytearray(tail)
         self.trailing_silence_ms = 0
         if reason == "forced":
@@ -230,17 +265,23 @@ class LlamaCppGemmaService:
                 if job is None:
                     return
                 index, pcm_bytes, reason, final = job
-                await self._safe_send_json(websocket, {"type": "content", "text": f"Transcribing audio chunk {index}...\n"})
+                await self._safe_send_json(
+                    websocket, {"type": "content", "text": f"Transcribing audio chunk {index}...\n"}
+                )
                 raw_transcript = await asyncio.to_thread(self._transcribe, pcm_bytes)
                 transcript = deduplicate_overlap(self._last_transcript, raw_transcript)
                 if not transcript:
                     continue
                 self._last_transcript = raw_transcript.strip()
-                await self._safe_send_json(websocket, {"type": "content", "text": f"Transcript {index}: {transcript}\n"})
+                await self._safe_send_json(
+                    websocket, {"type": "content", "text": f"Transcript {index}: {transcript}\n"}
+                )
                 await self._commit_transcript(transcript, reason, final)
             except Exception as exc:
                 logger.exception("Whisper transcription failed for audio chunk %s", job[0] if job else "?")
-                await self._safe_send_json(websocket, {"type": "content", "text": f"Local transcription failed: {exc}\n"})
+                await self._safe_send_json(
+                    websocket, {"type": "content", "text": f"Local transcription failed: {exc}\n"}
+                )
             finally:
                 self._audio_queue.task_done()
 
@@ -267,51 +308,103 @@ class LlamaCppGemmaService:
                 await self._stream_and_apply(websocket, transcript)
             except Exception as exc:
                 logger.exception("Gemma extraction failed for transcript batch")
-                await self._safe_send_json(websocket, {"type": "content", "text": f"Local form extraction failed: {exc}\n"})
+                await self._safe_send_json(
+                    websocket, {"type": "content", "text": f"Local form extraction failed: {exc}\n"}
+                )
             finally:
                 self._extraction_queue.task_done()
 
     def _transcribe(self, pcm_bytes: bytes) -> str:
         binary, model = Path(self.config.whisper_binary), Path(self.config.whisper_model)
         if not binary.exists() or not model.exists():
-            raise FileNotFoundError("Whisper runtime is missing. Run `python scripts/setup.py` or set WHISPER_CPP_BINARY and WHISPER_CPP_MODEL.")
+            raise FileNotFoundError(
+                "Whisper runtime is missing. Run `python scripts/setup.py` or "
+                "set WHISPER_CPP_BINARY and WHISPER_CPP_MODEL."
+            )
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio_file:
-            audio_file.write(_pcm_to_wav_bytes(pcm_bytes)); audio_path = Path(audio_file.name)
+            audio_file.write(_pcm_to_wav_bytes(pcm_bytes))
+            audio_path = Path(audio_file.name)
         try:
-            result = subprocess.run([str(binary), "-m", str(model), "-f", str(audio_path), "--no-timestamps", "-nt", "-t", str(self.config.whisper_threads)], capture_output=True, text=True, timeout=self.config.timeout_seconds, check=True)
-            return " ".join(line.strip() for line in result.stdout.splitlines() if line.strip() and not line.lstrip().startswith("["))
-        finally: audio_path.unlink(missing_ok=True)
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "-m",
+                    str(model),
+                    "-f",
+                    str(audio_path),
+                    "--no-timestamps",
+                    "-nt",
+                    "-t",
+                    str(self.config.whisper_threads),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_seconds,
+                check=True,
+            )
+            return " ".join(
+                line.strip()
+                for line in result.stdout.splitlines()
+                if line.strip() and not line.lstrip().startswith("[")
+            )
+        finally:
+            audio_path.unlink(missing_ok=True)
 
     async def _stream_and_apply(self, websocket: Any, transcript: str):
         loop, queue = asyncio.get_running_loop(), asyncio.Queue()
-        task = asyncio.create_task(asyncio.to_thread(self._stream_extraction, transcript, lambda fields: loop.call_soon_threadsafe(queue.put_nowait, fields)))
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                self._stream_extraction, transcript, lambda fields: loop.call_soon_threadsafe(queue.put_nowait, fields)
+            )
+        )
         while not task.done() or not queue.empty():
-            try: fields = await asyncio.wait_for(queue.get(), timeout=.1)
-            except asyncio.TimeoutError: continue
+            try:
+                fields = await asyncio.wait_for(queue.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
             for field, value in fields.items():
                 if field in SUPPORTED_FIELDS:
-                    await self._safe_send_json(websocket, {"type": "update", "field": field, "value": self._merge_update(field, value)})
+                    await self._safe_send_json(
+                        websocket, {"type": "update", "field": field, "value": self._merge_update(field, value)}
+                    )
         await task
 
     def _stream_extraction(self, transcript: str, emit: Callable[[Dict[str, Any]], None]):
-        payload = {"model": self.config.model_name, "messages": [{"role": "user", "content": build_extraction_prompt(transcript)}], "temperature": .1, "max_tokens": self.config.max_tokens, "stream": True, "grammar": EXTRACTION_GRAMMAR}
+        payload = {
+            "model": self.config.model_name,
+            "messages": [{"role": "user", "content": build_extraction_prompt(transcript)}],
+            "temperature": 0.1,
+            "max_tokens": self.config.max_tokens,
+            "stream": True,
+            "grammar": EXTRACTION_GRAMMAR,
+        }
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
-        request = urllib.request.Request(f"{self.config.base_url}/v1/chat/completions", data=json.dumps(payload).encode(), headers=headers, method="POST")
+        request = urllib.request.Request(
+            f"{self.config.base_url}/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
         buffer, emitted = "", set()
         try:
             with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line.startswith("data: ") or line == "data: [DONE]": continue
-                    try: delta = json.loads(line[6:])["choices"][0].get("delta", {}).get("content") or ""
-                    except (json.JSONDecodeError, KeyError, IndexError): continue
+                    if not line.startswith("data: ") or line == "data: [DONE]":
+                        continue
+                    try:
+                        delta = json.loads(line[6:])["choices"][0].get("delta", {}).get("content") or ""
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
                     if not isinstance(delta, str):
                         continue
                     buffer += delta
                     fields = {key: value for key, value in parse_partial_fields(buffer).items() if key not in emitted}
-                    if fields: emitted.update(fields); emit(fields)
+                    if fields:
+                        emitted.update(fields)
+                        emit(fields)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"llama-server HTTP {exc.code}: {exc.read().decode(errors='replace')}") from exc
         logger.info("Gemma extraction completed: %d characters, %d fields", len(buffer), len(emitted))
@@ -322,22 +415,37 @@ class LlamaCppGemmaService:
             seen, merged = set(), []
             for item in [*(existing if isinstance(existing, list) else [existing]), *incoming]:
                 item = str(item).strip()
-                if item and item.lower() not in seen: seen.add(item.lower()); merged.append(item)
-            self.patient_state[field] = merged; return merged
-        self.patient_state[field] = value; return value
+                if item and item.lower() not in seen:
+                    seen.add(item.lower())
+                    merged.append(item)
+            self.patient_state[field] = merged
+            return merged
+        self.patient_state[field] = value
+        return value
 
 
 def build_extraction_prompt(transcript: str) -> str:
-    return f'''Convert the doctor's dictation transcript into JSON. Output ONLY one single-line JSON object containing ONLY fields explicitly present. Available keys: name, age, gender, chief_complaint, symptoms (array of strings), blood_pressure, pulse, temperature, spo2, ration_card_type, income, occupation, caste_category, housing_type, location, tentative_diagnosis. Omit absent fields; never output null or empty values; normalize BP as "120/80" and temperature as a plain number.\n\nTranscript: {json.dumps(transcript, ensure_ascii=False)}\n\nJSON:'''
+    return f"""Convert the doctor's dictation transcript into JSON. Output ONLY one single-line JSON object
+containing ONLY fields explicitly present. Available keys: name, age, gender, chief_complaint, symptoms
+(array of strings), blood_pressure, pulse, temperature, spo2, ration_card_type, income, occupation,
+caste_category, housing_type, location, tentative_diagnosis. Omit absent fields; never output null or empty
+values; normalize BP as "120/80" and temperature as a plain number.
+
+Transcript: {json.dumps(transcript, ensure_ascii=False)}
+
+JSON:"""
 
 
 def parse_partial_fields(text: str) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
     for key, raw_value in FIELD_RE.findall(text):
-        try: value = json.loads(raw_value)
-        except json.JSONDecodeError: continue
+        try:
+            value = json.loads(raw_value)
+        except json.JSONDecodeError:
+            continue
         field = FLAT_FIELD_MAP.get(key, key)
-        if field in SUPPORTED_FIELDS and value not in (None, "", []): fields[field] = value
+        if field in SUPPORTED_FIELDS and value not in (None, "", []):
+            fields[field] = value
     return fields
 
 
@@ -375,12 +483,19 @@ def validate_updates(raw_updates: Any) -> List[Dict[str, Any]]:
 def _pcm_to_wav_bytes(pcm_bytes: bytes) -> bytes:
     with tempfile.SpooledTemporaryFile() as wav_file:
         with wave.open(wav_file, "wb") as writer:
-            writer.setnchannels(CHANNELS); writer.setsampwidth(SAMPLE_WIDTH_BYTES); writer.setframerate(SAMPLE_RATE); writer.writeframes(pcm_bytes)
-        wav_file.seek(0); return wav_file.read()
+            writer.setnchannels(CHANNELS)
+            writer.setsampwidth(SAMPLE_WIDTH_BYTES)
+            writer.setframerate(SAMPLE_RATE)
+            writer.writeframes(pcm_bytes)
+        wav_file.seek(0)
+        return wav_file.read()
 
 
 def is_probably_silent(pcm_bytes: bytes, min_rms: float, min_duration_ms: int = 500) -> bool:
-    if min_duration_ms and len(pcm_bytes) < SAMPLE_RATE * SAMPLE_WIDTH_BYTES * min_duration_ms / 1000: return True
-    samples = array.array("h"); samples.frombytes(pcm_bytes[:len(pcm_bytes) - len(pcm_bytes) % SAMPLE_WIDTH_BYTES])
-    if not samples: return True
-    return (sum(sample * sample for sample in samples) / len(samples)) ** .5 < min_rms
+    if min_duration_ms and len(pcm_bytes) < SAMPLE_RATE * SAMPLE_WIDTH_BYTES * min_duration_ms / 1000:
+        return True
+    samples = array.array("h")
+    samples.frombytes(pcm_bytes[: len(pcm_bytes) - len(pcm_bytes) % SAMPLE_WIDTH_BYTES])
+    if not samples:
+        return True
+    return (sum(sample * sample for sample in samples) / len(samples)) ** 0.5 < min_rms

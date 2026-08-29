@@ -5,15 +5,15 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 # Load the portable local configuration before services read environment defaults.
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-from app.services.llama_cpp_gemma_service import LlamaCppGemmaService
-from app.services.llama_server_manager import LlamaServerManager
+from app.services.llama_cpp_gemma_service import LlamaCppGemmaService  # noqa: E402
+from app.services.llama_server_manager import LlamaServerManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI):
 
     await llama_server.start()
     from app.database import init_db
+
     logger.info("Initializing database...")
     init_db()
 
@@ -49,8 +50,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Parchee Edge Backend", lifespan=lifespan)
 
-from app.api.routes import router as api_router
-from app.api.ehr import router as ehr_router
+from app.api.ehr import router as ehr_router  # noqa: E402
+from app.api.routes import router as api_router  # noqa: E402
 
 app.include_router(api_router, prefix="/api")
 app.include_router(ehr_router, prefix="/api/ehr")

@@ -2,20 +2,19 @@ import asyncio
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+from app.services.hardware_profiles import detect_profile
 from app.services.llama_cpp_gemma_service import (
     LlamaCppConfig,
     LlamaCppGemmaService,
     deduplicate_overlap,
     is_probably_silent,
-    parse_partial_fields,
     parse_extraction_response,
+    parse_partial_fields,
     validate_updates,
 )
 from app.services.llama_server_manager import LlamaServerConfig, LlamaServerManager
-from app.services.hardware_profiles import detect_profile
 
 
 class ExtractionParsingTests(unittest.TestCase):
@@ -33,9 +32,7 @@ class ExtractionParsingTests(unittest.TestCase):
         self.assertEqual(parsed["updates"][1]["field"], "vitals.spo2")
 
     def test_recovers_json_from_wrapped_response(self):
-        parsed = parse_extraction_response(
-            'Here is the JSON:\n{"name":"Asha","blood_pressure":"118/76"}\nDone'
-        )
+        parsed = parse_extraction_response('Here is the JSON:\n{"name":"Asha","blood_pressure":"118/76"}\nDone')
 
         self.assertEqual(parsed["updates"][1]["field"], "vitals.blood_pressure")
 
@@ -58,11 +55,13 @@ class ExtractionParsingTests(unittest.TestCase):
                 return False
 
             def __iter__(self):
-                return iter([
-                    b'data: {"choices":[{"delta":{"content":null}}]}\n',
-                    b'data: {"choices":[{"delta":{"content":"{\\\"name\\\":\\\"Asha\\\"}"}}]}\n',
-                    b'data: [DONE]\n',
-                ])
+                return iter(
+                    [
+                        b'data: {"choices":[{"delta":{"content":null}}]}\n',
+                        b'data: {"choices":[{"delta":{"content":"{\\"name\\":\\"Asha\\"}"}}]}\n',
+                        b"data: [DONE]\n",
+                    ]
+                )
 
         emitted = []
         with patch("urllib.request.urlopen", return_value=FakeResponse()):
@@ -90,9 +89,7 @@ class UpdateValidationTests(unittest.TestCase):
         )
 
     def test_splits_list_field_string(self):
-        updates = validate_updates(
-            [{"field": "symptoms", "value": "fever, cough, fatigue"}]
-        )
+        updates = validate_updates([{"field": "symptoms", "value": "fever, cough, fatigue"}])
 
         self.assertEqual(updates[0]["value"], ["fever", "cough", "fatigue"])
 
@@ -161,7 +158,7 @@ class VadSegmentationTests(unittest.IsolatedAsyncioTestCase):
                 min_rms=180,
                 vad_frame_ms=250,
                 vad_start_ms=250,
-                asr_slice_seconds=.5,
+                asr_slice_seconds=0.5,
                 max_speech_seconds=8,
                 min_speech_ms=250,
             )
