@@ -2,8 +2,9 @@
 
 import { ChangeEvent, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import type { FieldPath, UseFormRegisterReturn } from 'react-hook-form';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PatientData } from '@/types';
+import { PatientData, Vitals } from '@/types';
 import { ClipboardList, Thermometer, User, Activity, CreditCard, CheckCircle2, Info, Stethoscope, Receipt } from 'lucide-react';
 
 interface LiveFormProps {
@@ -11,10 +12,14 @@ interface LiveFormProps {
     onFieldChange?: (field: string, value: string) => void;
 }
 
+// register() wrapper that forwards edits to the parent; typed against the
+// PatientData field names so callers cannot pass a typo'd field path.
+type SyncedRegister = (name: FieldPath<PatientData>) => UseFormRegisterReturn<string>;
+
 export function LiveForm({ data, onFieldChange }: LiveFormProps) {
-    const { register, setValue, watch } = useForm<PatientData>({ defaultValues: data });
+    const { register, setValue, getValues } = useForm<PatientData>({ defaultValues: data });
     const [lastUpdatedField, setLastUpdatedField] = useState<string | null>(null);
-    const syncedRegister = (name: any) => register(name, {
+    const syncedRegister: SyncedRegister = (name) => register(name, {
         onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
             onFieldChange?.(String(name), event.target.value);
         }
@@ -25,22 +30,23 @@ export function LiveForm({ data, onFieldChange }: LiveFormProps) {
             const k = key as keyof PatientData;
             if (data[k] !== undefined) {
                 if (k === 'vitals' && typeof data[k] === 'object') {
-                    Object.keys(data[k]!).forEach(vKey => {
-                        const path = `vitals.${vKey}` as any;
-                        if (JSON.stringify((data[k] as any)[vKey]) !== JSON.stringify(watch(path))) {
-                            setValue(path, (data[k] as any)[vKey]);
+                    const vitals = data[k] as Vitals;
+                    (Object.keys(vitals) as Array<keyof Vitals>).forEach(vKey => {
+                        const path = `vitals.${String(vKey)}` as FieldPath<PatientData>;
+                        if (JSON.stringify(vitals[vKey]) !== JSON.stringify(getValues(path))) {
+                            setValue(path, vitals[vKey]);
                             setLastUpdatedField('vitals');
                             setTimeout(() => setLastUpdatedField(null), 1000);
                         }
                     });
-                } else if (JSON.stringify(data[k]) !== JSON.stringify(watch(k))) {
+                } else if (JSON.stringify(data[k]) !== JSON.stringify(getValues(k))) {
                     setValue(k, data[k]);
                     setLastUpdatedField(k);
                     setTimeout(() => setLastUpdatedField(null), 1000);
                 }
             }
         });
-    }, [data, setValue, watch]);
+    }, [data, setValue, getValues]);
 
     return (
         <div className="space-y-4 p-4 bg-transparent h-full flex flex-col overflow-hidden">
@@ -244,7 +250,7 @@ export function LiveForm({ data, onFieldChange }: LiveFormProps) {
     );
 }
 
-function EligibilityStatus({ data }: { data: any }) {
+function EligibilityStatus({ data }: { data: PatientData }) {
     const backendData = data.scheme_eligibility;
     const requiredEligibilityFields = [
         data.age,
@@ -311,7 +317,17 @@ function StatusRow({ label, eligible }: { label: string; eligible: boolean }) {
 
 const DARK_TEXT_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12'%3E%3Cline x1='1' y1='0' x2='7' y2='0' stroke='black' stroke-width='1.5'/%3E%3Cline x1='4' y1='0' x2='4' y2='12' stroke='black' stroke-width='1.5'/%3E%3Cline x1='1' y1='12' x2='7' y2='12' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") 4 6, text`;
 
-function InputField({ label, name, register, highlight, isTextArea, placeholder, minHeight = 'h-[48px]' }: any) {
+interface InputFieldProps {
+    label: string;
+    name: FieldPath<PatientData>;
+    register: SyncedRegister;
+    highlight?: boolean;
+    isTextArea?: boolean;
+    placeholder?: string;
+    minHeight?: string;
+}
+
+function InputField({ label, name, register, highlight, isTextArea, placeholder, minHeight = 'h-[48px]' }: InputFieldProps) {
     return (
         <div className="relative group w-full flex flex-col">
             <label className="block text-[10px] font-bold text-primary/80 uppercase tracking-[0.15em] mb-1.5 px-0.5">{label}</label>
@@ -336,7 +352,15 @@ function InputField({ label, name, register, highlight, isTextArea, placeholder,
     );
 }
 
-function VitalField({ label, name, register, highlight, unit }: any) {
+interface VitalFieldProps {
+    label: string;
+    name: FieldPath<PatientData>;
+    register: SyncedRegister;
+    highlight?: boolean;
+    unit?: string;
+}
+
+function VitalField({ label, name, register, highlight, unit }: VitalFieldProps) {
     return (
         <div className={`p-3 rounded-2xl border transition-all duration-500 h-[72px] flex flex-col justify-between ${highlight ? 'border-primary bg-primary/5 shadow-[0_0_30px_rgba(75,83,32,0.15)] z-10' : 'border-border bg-background hover:border-primary/30'}`}>
             <label className="block text-[10px] font-bold text-primary/80 uppercase tracking-widest">{label}</label>
@@ -353,7 +377,14 @@ function VitalField({ label, name, register, highlight, unit }: any) {
     );
 }
 
-function ListSection({ title, items, highlight, placeholder }: any) {
+interface ListSectionProps {
+    title: string;
+    items?: string[];
+    highlight?: boolean;
+    placeholder?: string;
+}
+
+function ListSection({ title, items, highlight, placeholder }: ListSectionProps) {
     const list = Array.isArray(items) ? items : [];
 
     return (

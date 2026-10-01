@@ -85,3 +85,11 @@ export interface ScribeSessionSnapshot {
     entryMode?: 'create' | 'update';
     updatedAt: string;
 }
+
+// Messages streamed by the backend over the /ws/live-consultation socket.
+export interface LiveScribeMessage {
+    type: 'update' | 'content' | 'session_complete';
+    field?: string;
+    value?: unknown;
+    text?: string;
+}

@@ -12,7 +12,6 @@ from app.database import (
     delete_patient,
     get_all_patients,
     get_patient_by_id,
-    init_db,
     save_patient,
     update_patient,
     update_patient_billing,
@@ -22,13 +21,11 @@ from app.database import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize DB on module load
-init_db()
-
 
 # ---------------------------------------------------------------------------
 # Request / Response models for billing endpoints
 # ---------------------------------------------------------------------------
+
 
 class ICDSuggestRequest(BaseModel):
     chief_complaint: Optional[str] = None
@@ -47,7 +44,7 @@ class CodeSearchRequest(BaseModel):
     query: str
     code_type: str = "diagnosis"  # "diagnosis" | "procedure"
     top_k: int = 10
-    min_confidence: float = 0.35   # reject results below 35% — avoids nonsensical matches
+    min_confidence: float = 0.35  # reject results below 35% — avoids nonsensical matches
 
 
 class BillingCodesPatch(BaseModel):
@@ -64,9 +61,11 @@ class FHIRExportRequest(PatientData):
 # Background tasks
 # ---------------------------------------------------------------------------
 
+
 async def _generate_and_save_summary(patient_id: int, transcript_history: list[str]) -> None:
     """Background task: generates transcript summary with retries and saves to DB."""
     from app.services.summarizer import generate_consultation_summary_async
+
     try:
         summary = await generate_consultation_summary_async(transcript_history)
         if summary and summary != "Error generating summary.":
@@ -84,13 +83,11 @@ async def _run_billing_automation(patient_id: int, data: PatientData) -> None:
     Mirrors _generate_and_save_summary — fires after every new EHR commit.
     """
     try:
+        from app.services.billing_service import BillingService
         from app.services.icd_coding_service import ICDCodingService
         from app.services.procedure_coding_service import ProcedureCodingService
-        from app.services.billing_service import BillingService
 
-        dx_text = " ".join(
-            filter(None, [data.tentative_doctor_diagnosis, data.initial_llm_diagnosis])
-        )
+        dx_text = " ".join(filter(None, [data.tentative_doctor_diagnosis, data.initial_llm_diagnosis]))
 
         dx_service = ICDCodingService()
         px_service = ProcedureCodingService()
@@ -134,6 +131,7 @@ async def _run_billing_automation(patient_id: int, data: PatientData) -> None:
 # ---------------------------------------------------------------------------
 # Core EHR endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/commit")
 async def commit_to_ehr(data: PatientData, background_tasks: BackgroundTasks):
@@ -250,6 +248,7 @@ async def export_current_fhir(data: FHIRExportRequest):
 # Billing automation endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.post("/icd-suggest")
 async def suggest_icd_codes(req: ICDSuggestRequest):
     """
@@ -258,6 +257,7 @@ async def suggest_icd_codes(req: ICDSuggestRequest):
     """
     try:
         from app.services.icd_coding_service import ICDCodingService
+
         suggestions = ICDCodingService().suggest(
             chief_complaint=req.chief_complaint,
             symptoms=req.symptoms or [],
@@ -278,6 +278,7 @@ async def suggest_procedure_codes(req: ProcedureSuggestRequest):
     """
     try:
         from app.services.procedure_coding_service import ProcedureCodingService
+
         suggestions = ProcedureCodingService().suggest(
             procedures=req.procedures or [],
             medications=req.medications or [],
@@ -298,9 +299,11 @@ async def search_codes(req: CodeSearchRequest):
     try:
         if req.code_type == "procedure":
             from app.services.procedure_coding_service import ProcedureCodingService
+
             results = ProcedureCodingService().search(query=req.query, top_k=req.top_k)
         else:
             from app.services.icd_coding_service import ICDCodingService
+
             results = ICDCodingService().search(query=req.query, top_k=req.top_k)
         # Filter out low-confidence results (e.g. "fever" in procedure search)
         filtered = [r for r in results if r.confidence >= req.min_confidence]
@@ -371,7 +374,6 @@ async def get_clinical_trends():
     """
     try:
         from collections import Counter
-        import json as _json
 
         patients = get_all_patients()
 
@@ -380,34 +382,22 @@ async def get_clinical_trends():
         symptom_counter: Counter = Counter()
 
         for p in patients:
-            for code_entry in (p.get("icd10_codes") or []):
+            for code_entry in p.get("icd10_codes") or []:
                 if isinstance(code_entry, dict) and code_entry.get("code"):
-                    dx_counter[
-                        f"{code_entry['code']} — {code_entry.get('description', '')}"
-                    ] += 1
-            for code_entry in (p.get("procedure_codes") or []):
+                    dx_counter[f"{code_entry['code']} — {code_entry.get('description', '')}"] += 1
+            for code_entry in p.get("procedure_codes") or []:
                 if isinstance(code_entry, dict) and code_entry.get("code"):
-                    px_counter[
-                        f"{code_entry['code']} — {code_entry.get('description', '')}"
-                    ] += 1
-            for symptom in (p.get("symptoms") or []):
+                    px_counter[f"{code_entry['code']} — {code_entry.get('description', '')}"] += 1
+            for symptom in p.get("symptoms") or []:
                 if symptom:
                     symptom_counter[symptom.lower()] += 1
 
         return {
-            "top_diagnoses": [
-                {"label": k, "count": v} for k, v in dx_counter.most_common(10)
-            ],
-            "top_procedures": [
-                {"label": k, "count": v} for k, v in px_counter.most_common(10)
-            ],
-            "top_symptoms": [
-                {"label": k, "count": v} for k, v in symptom_counter.most_common(10)
-            ],
+            "top_diagnoses": [{"label": k, "count": v} for k, v in dx_counter.most_common(10)],
+            "top_procedures": [{"label": k, "count": v} for k, v in px_counter.most_common(10)],
+            "top_symptoms": [{"label": k, "count": v} for k, v in symptom_counter.most_common(10)],
             "total_patients": len(patients),
         }
     except Exception as exc:
         logger.error("analytics/trends error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
-
-

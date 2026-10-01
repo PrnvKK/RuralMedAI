@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 class BillingClaim(BaseModel):
     patient_id: int
-    encounter_date: str                         # ISO date: "2026-03-02"
-    principal_diagnosis_code: str               # Highest-confidence ICD-10-CM code
+    encounter_date: str  # ISO date: "2026-03-02"
+    principal_diagnosis_code: str  # Highest-confidence ICD-10-CM code
     principal_diagnosis_description: str
-    diagnosis_codes: list[dict[str, Any]]       # Full ICDSuggestion list as dicts
-    procedure_codes: list[dict[str, Any]]       # Full ProcedureSuggestion list as dicts
-    billing_notes: str                          # Human-readable summary for insurer forms
-    coding_status: str                          # "auto_coded" | "confirmed" | "partial"
+    diagnosis_codes: list[dict[str, Any]]  # Full ICDSuggestion list as dicts
+    procedure_codes: list[dict[str, Any]]  # Full ProcedureSuggestion list as dicts
+    billing_notes: str  # Human-readable summary for insurer forms
+    coding_status: str  # "auto_coded" | "confirmed" | "partial"
 
 
 class BillingService:
@@ -54,9 +54,7 @@ class BillingService:
         # Principal diagnosis = highest-confidence ICD-10-CM code
         principal_dx = diagnosis_codes[0] if diagnosis_codes else None
         principal_code = principal_dx.code if principal_dx else "Z00.00"
-        principal_desc = (
-            principal_dx.description if principal_dx else "General medical examination"
-        )
+        principal_desc = principal_dx.description if principal_dx else "General medical examination"
 
         billing_notes = self._build_billing_notes(
             patient_name=patient_name,

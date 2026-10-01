@@ -5,11 +5,12 @@ import { useSocket } from '@/hooks/useSocket';
 import { AudioChunk, useAudioStream } from '@/hooks/useAudioStream';
 import { LiveForm } from '@/components/LiveForm';
 import { AudioVisualizer } from '@/components/AudioVisualizer';
-import { PatientData, TranscriptItem } from '@/types';
+import { PatientData, TranscriptItem, LiveScribeMessage } from '@/types';
 import { Mic, Square, Save, RefreshCw, FileText, Eraser, Clock3, Plus, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { clearScribeSession, loadScribeSession, saveScribeSession } from '@/lib/sessionStore';
+import { API } from '@/lib/api';
 
 const SEND_INTERVAL_MS = Number(process.env.NEXT_PUBLIC_PARCHEE_SEND_INTERVAL_MS || 500);
 
@@ -91,7 +92,7 @@ export default function Home() {
         const patientId = searchParams?.get('patient_id');
         if (patientId) {
             console.log(`Resuming session for patient ${patientId}...`);
-            fetch(`http://localhost:8003/api/ehr/patients/${patientId}`)
+            fetch(`${API.BASE}/api/ehr/patients/${patientId}`)
                 .then(res => res.json())
                 .then(data => {
                     console.log("Loaded patient data:", data);
@@ -114,7 +115,6 @@ export default function Home() {
     const [entryMode, setEntryMode] = useState<'create' | 'update'>('create');
     const [formInstanceKey, setFormInstanceKey] = useState(0);
     const [sessionHydrated, setSessionHydrated] = useState(false);
-    const [sessionSyncedAt, setSessionSyncedAt] = useState<string | null>(null);
 
     const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
@@ -139,7 +139,6 @@ export default function Home() {
             setEntryMode(snapshot.entryMode || (restoredId ? 'update' : 'create'));
             setPatientData(snapshot.patientData || {});
             setTranscript(Array.isArray(snapshot.transcript) ? snapshot.transcript : []);
-            setSessionSyncedAt(new Date(snapshot.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
         }
         setSessionHydrated(true);
     }, []);
@@ -155,7 +154,6 @@ export default function Home() {
             entryMode,
             updatedAt
         });
-        setSessionSyncedAt(nowClock());
     }, [patientData, transcript, activePatientId, entryMode, sessionHydrated]);
 
     useEffect(() => {
@@ -164,8 +162,9 @@ export default function Home() {
         }
     }, [transcript]);
 
-    const handleMessage = useCallback((data: any) => {
+    const handleMessage = useCallback((data: LiveScribeMessage) => {
         const ts = nowClock();
+        console.log('[WS MSG]', data.type, data.field || '', typeof data.value === 'string' ? (data.value as string).slice(0, 40) : '');
 
         if (data.type === 'session_complete') {
             disconnectRef.current();
@@ -175,7 +174,8 @@ export default function Home() {
         }
 
         if (data.type === 'update' && data.field) {
-            setPatientData(prev => applyPatientUpdate(prev, data.field, data.value));
+            const field = data.field;
+            setPatientData(prev => applyPatientUpdate(prev, field, data.value));
             setTranscript(prev => ([
                 ...prev,
                 {
@@ -242,7 +242,7 @@ export default function Home() {
         }
     }, [isConnected]);
 
-    const { isRecording, startRecording, stopRecording, getAudioDevices } = useAudioStream(onAudioChunk);
+    const { isRecording, startRecording, stopRecording, getAudioDevices, audioLevel = 0 } = useAudioStream(onAudioChunk);
 
     useEffect(() => {
         getAudioDevices().then(devices => {
@@ -292,14 +292,13 @@ export default function Home() {
         setFormInstanceKey((prev) => prev + 1);
         setTranscript([]);
         clearScribeSession();
-        setSessionSyncedAt(null);
     };
 
     const handleStartNewEntry = async () => {
         let nextId = 1;
 
         try {
-            const response = await fetch('http://localhost:8003/api/ehr/patients');
+            const response = await fetch(`${API.EHR}/patients`);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
@@ -337,7 +336,8 @@ export default function Home() {
             setEntryMode('create');
             setPatientData(prev => {
                 if (prev.id === undefined) return prev;
-                const { id, ...rest } = prev;
+                const rest = { ...prev };
+                delete rest.id;
                 return rest;
             });
             return;
@@ -373,13 +373,15 @@ export default function Home() {
             const payload: PatientData = isUpdate && activePatientId
                 ? { ...currentData, id: activePatientId }
                 : (() => {
-                    const { id, ...rest } = currentData;
+                    const rest = { ...currentData };
+                    delete rest.id;
                     return rest;
                 })();
-            const updateEndpoint = activePatientId ? `http://localhost:8003/api/ehr/patients/${activePatientId}` : '';
-            const createEndpoint = 'http://localhost:8003/api/ehr/commit';
+            const updateEndpoint = activePatientId ? `${API.EHR}/patients/${activePatientId}` : '';
+            const createEndpoint = `${API.EHR}/commit`;
             const createPayload = (() => {
-                const { id, ...rest } = payload;
+                const rest = { ...payload };
+                delete rest.id;
                 return rest;
             })();
 
@@ -446,8 +448,8 @@ export default function Home() {
         setIsExportingFhir(true);
         try {
             const endpoint = activePatientId
-                ? `http://localhost:8003/api/ehr/patients/${activePatientId}/fhir`
-                : 'http://localhost:8003/api/ehr/fhir/export';
+                ? `${API.EHR}/patients/${activePatientId}/fhir`
+                : `${API.EHR}/fhir/export`;
             const response = await fetch(endpoint, activePatientId
                 ? undefined
                 : {
@@ -502,7 +504,7 @@ export default function Home() {
                     <div className="h-5 w-px bg-border/50" />
 
                     <div className="flex-1 px-4">
-                        <AudioVisualizer isRecording={isRecording} />
+                        <AudioVisualizer isRecording={isRecording} audioLevel={audioLevel} />
                     </div>
 
                     <div className="h-5 w-px bg-border/50" />

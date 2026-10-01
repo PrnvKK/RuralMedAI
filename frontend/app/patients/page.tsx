@@ -5,6 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, User, Activity, Calendar, FileText, Search, ClipboardList, Trash2, ChevronRight, Receipt, Stethoscope, RefreshCw, Download } from 'lucide-react';
 import Link from 'next/link';
 import { getAyushmanTemplate, getCGHSTemplate, getECHSTemplate } from '../utils/documentTemplates';
+import { API } from '@/lib/api';
+import type { ICDCodeEntry, PatientData } from '@/types';
+
+// Patient rows fetched from the EHR API: PatientData plus the DB bookkeeping
+// fields that are not part of the clinical payload.
+interface PatientRecord extends PatientData {
+    created_at: string;
+}
 
 function downloadJson(filename: string, payload: unknown) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/fhir+json' });
@@ -19,12 +27,12 @@ function downloadJson(filename: string, payload: unknown) {
 }
 
 export default function PatientsPage() {
-    const [patients, setPatients] = useState<any[]>([]);
+    const [patients, setPatients] = useState<PatientRecord[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPatient, setSelectedPatient] = useState<any | null>(null);
-    const [patientToDelete, setPatientToDelete] = useState<any | null>(null);
-    const [patientToExport, setPatientToExport] = useState<any | null>(null);
+    const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
+    const [patientToDelete, setPatientToDelete] = useState<PatientRecord | null>(null);
+    const [patientToExport, setPatientToExport] = useState<PatientRecord | null>(null);
 
     const handleExport = (scheme: 'AYUSHMAN' | 'CGHS' | 'ECHS') => {
         if (!patientToExport) return;
@@ -60,7 +68,7 @@ export default function PatientsPage() {
         if (!patientToExport?.id) return;
 
         try {
-            const response = await fetch(`http://localhost:8003/api/ehr/patients/${patientToExport.id}/fhir`);
+            const response = await fetch(`${API.EHR}/patients/${patientToExport.id}/fhir`);
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
                 throw new Error(error.detail || 'FHIR export failed');
@@ -75,7 +83,7 @@ export default function PatientsPage() {
     };
 
     useEffect(() => {
-        fetch('http://localhost:8003/api/ehr/patients')
+        fetch(`${API.EHR}/patients`)
             .then(res => res.json())
             .then(data => {
                 setPatients(data);
@@ -97,7 +105,7 @@ export default function PatientsPage() {
         if (!patientToDelete) return;
 
         try {
-            const res = await fetch(`http://localhost:8003/api/ehr/patients/${patientToDelete.id}`, {
+            const res = await fetch(`${API.EHR}/patients/${patientToDelete.id}`, {
                 method: 'DELETE',
             });
             if (res.ok) {
@@ -179,13 +187,13 @@ export default function PatientsPage() {
                                             <FileText className="w-3 h-3" /> Impression
                                         </div>
                                         <p className="text-[12px] font-medium text-foreground/70 line-clamp-2 leading-relaxed italic">
-                                            "{patient.tentative_doctor_diagnosis || patient.initial_llm_diagnosis || "No clinical findings recorded"}"
+                                            &ldquo;{patient.tentative_doctor_diagnosis || patient.initial_llm_diagnosis || "No clinical findings recorded"}&rdquo;
                                         </p>
 
                                         {/* ICD-10-CM Code Badges */}
                                         {Array.isArray(patient.icd10_codes) && patient.icd10_codes.length > 0 && (
                                             <div className="flex flex-wrap gap-1.5 pt-1.5">
-                                                {patient.icd10_codes.slice(0, 2).map((c: any, i: number) => (
+                                                {patient.icd10_codes.slice(0, 2).map((c: ICDCodeEntry, i: number) => (
                                                     <span key={i} className="px-2 py-0.5 bg-primary/5 border border-primary/10 text-primary text-[9px] font-bold rounded-lg uppercase tracking-tighter">
                                                         {c.code}
                                                     </span>
@@ -355,7 +363,7 @@ export default function PatientsPage() {
                                                                 <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                                                                     <Stethoscope className="w-2.5 h-2.5" /> ICD-10-CM Diagnoses
                                                                 </label>
-                                                                {selectedPatient.icd10_codes.map((c: any, i: number) => (
+                                                                {selectedPatient.icd10_codes!.map((c: ICDCodeEntry, i: number) => (
                                                                     <div key={i} className="flex justify-between items-center px-2 py-1 bg-blue-50 border border-blue-100 rounded text-[10px]">
                                                                         <span className="font-bold font-mono text-blue-700">{c.code}</span>
                                                                         <span className="text-slate-600 truncate mx-2 flex-1">{c.description}</span>
@@ -369,7 +377,7 @@ export default function PatientsPage() {
                                                                 <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
                                                                     <Receipt className="w-2.5 h-2.5" /> ICD-10-PCS Procedures
                                                                 </label>
-                                                                {selectedPatient.procedure_codes.map((c: any, i: number) => (
+                                                                {selectedPatient.procedure_codes!.map((c: ICDCodeEntry, i: number) => (
                                                                     <div key={i} className="flex justify-between items-center px-2 py-1 bg-violet-50 border border-violet-100 rounded text-[10px]">
                                                                         <span className="font-bold font-mono text-violet-700">{c.code}</span>
                                                                         <span className="text-slate-600 truncate mx-2 flex-1">{c.description}</span>
@@ -516,7 +524,7 @@ export default function PatientsPage() {
     );
 }
 
-function DetailBox({ label, value, unit }: any) {
+function DetailBox({ label, value, unit }: { label: string; value?: string; unit?: string }) {
     return (
         <div className="p-3 bg-slate-50 border border-slate-200 rounded">
             <label className="text-[8px] font-bold text-slate-400 uppercase block tracking-widest mb-1">{label}</label>
@@ -527,7 +535,7 @@ function DetailBox({ label, value, unit }: any) {
     )
 }
 
-function ListSection({ title, items }: any) {
+function ListSection({ title, items }: { title: string; items?: string[] }) {
     const list = Array.isArray(items) ? items : [];
     return (
         <div className="space-y-2">

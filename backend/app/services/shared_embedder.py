@@ -4,11 +4,13 @@ Shared singleton embedding model for the clinical coding pipeline.
 Both ICDCodingService and ProcedureCodingService import `get_embedder()` and
 `encode_with_progress()`. The model is loaded exactly once per process.
 """
+
 from __future__ import annotations
 
 import logging
-import numpy as np
 from typing import List
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,7 @@ def get_embedder():
     if _embedder is None:
         logger.info("Loading shared embedding model: %s …", _EMBEDDING_MODEL)
         from sentence_transformers import SentenceTransformer
+
         _embedder = SentenceTransformer(_EMBEDDING_MODEL)
         logger.info("Shared embedding model ready.")
     return _embedder

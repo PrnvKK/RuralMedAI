@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Search, Receipt, Stethoscope, Activity, BarChart3,
+    Search, Receipt, Stethoscope, Activity,
     CheckCircle2, Clock, AlertCircle, ArrowLeft, ChevronDown, ChevronUp,
     FileText, RefreshCw, User
 } from 'lucide-react';
 import Link from 'next/link';
+import { API } from '@/lib/api';
 
-const API_BASE = 'http://localhost:8003/api/ehr';
+const API_BASE = API.EHR;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,7 +132,6 @@ function DiagnosticsInner() {
     const [codeType, setCodeType] = useState<'diagnosis' | 'procedure'>('diagnosis');
     const [searchResults, setSearchResults] = useState<CodeEntry[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
-    const [searchDebounce, setSearchDebounce] = useState<ReturnType<typeof setTimeout> | null>(null);
 
     // Audit state
     const [patients, setPatients] = useState<Patient[]>([]);
@@ -185,23 +185,20 @@ function DiagnosticsInner() {
     }, []);
 
     useEffect(() => {
-        if (searchDebounce) clearTimeout(searchDebounce);
         const t = setTimeout(() => doSearch(searchQuery, codeType), 320);
-        setSearchDebounce(t);
         return () => clearTimeout(t);
-    }, [searchQuery, codeType]);
+    }, [searchQuery, codeType, doSearch]);
 
     // ── Load trends ──
     useEffect(() => {
-        if (activeTab !== 'trends') return;
-        if (trends) return; // already loaded
+        if (activeTab !== 'trends' || trends) return; // not visible or already loaded
         setTrendsLoading(true);
         fetch(`${API_BASE}/analytics/trends`)
             .then(r => r.json())
             .then(setTrends)
             .catch(console.error)
             .finally(() => setTrendsLoading(false));
-    }, [activeTab]);
+    }, [activeTab, trends]);
 
     // ── Confirm billing for a patient ──
     const confirmBilling = async (patientId: number) => {
@@ -485,7 +482,7 @@ function DiagnosticsInner() {
 
                         {searchQuery && !searchLoading && searchResults.length === 0 && (
                             <div className="text-center py-8 text-slate-400 text-[10px] font-mono uppercase tracking-widest">
-                                No codes found for "{searchQuery}"
+                                No codes found for &ldquo;{searchQuery}&rdquo;
                             </div>
                         )}
 

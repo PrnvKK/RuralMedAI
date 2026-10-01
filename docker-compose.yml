@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: parchee-postgres
     environment:
-      POSTGRES_DB: ruralmed
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-ruralmed}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ruralmed"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ruralmed}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,57 +24,42 @@ services:
       - |
         set -eu
         mkdir -p /models
-        if [ ! -s /models/gemma-4.gguf ]; then
-          echo "Downloading Gemma 4 model..."
-          curl -L --fail --retry 5 --retry-delay 5 -o /models/gemma-4.gguf "$$LLAMA_SERVER_MODEL_URL"
+        if [ ! -s /models/gemma-3-4b-it-Q4_K_M.gguf ]; then
+          echo "Downloading Gemma 3 4B model..."
+          curl -L --fail --retry 5 --retry-delay 5 -o /models/gemma-3-4b-it-Q4_K_M.gguf "$$LLAMA_SERVER_MODEL_URL"
         else
-          echo "Gemma 4 model already present."
-        fi
-        if [ ! -s /models/mmproj.gguf ]; then
-          echo "Downloading Gemma 4 mmproj..."
-          curl -L --fail --retry 5 --retry-delay 5 -o /models/mmproj.gguf "$$LLAMA_SERVER_MMPROJ_URL"
-        else
-          echo "Gemma 4 mmproj already present."
+          echo "Gemma 3 model already present."
         fi
     environment:
-      LLAMA_SERVER_MODEL_URL: ${LLAMA_SERVER_MODEL_URL:-https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf?download=true}
-      LLAMA_SERVER_MMPROJ_URL: ${LLAMA_SERVER_MMPROJ_URL:-https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf?download=true}
+      LLAMA_SERVER_MODEL_URL: ${LLAMA_SERVER_MODEL_URL:-https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf?download=true}
     volumes:
       - llama_models:/models
 
   llama-server:
-    image: ${LLAMA_CPP_DOCKER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    image: ${LLAMA_CPP_DOCKER_IMAGE:-ghcr.io/ggml-org/llama.cpp:server}
     container_name: parchee-llama-server
-    gpus: all
+    # Use `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up` for
+    # NVIDIA GPU acceleration (requires NVIDIA Container Toolkit).
     command:
       - -m
-      - /models/gemma-4.gguf
-      - --mmproj
-      - /models/mmproj.gguf
-      - --chat-template-file
-      - /templates/gemma4_no_think.jinja
-      - --reasoning
-      - "off"
-      - --reasoning-budget
-      - "0"
+      - /models/gemma-3-4b-it-Q4_K_M.gguf
       - --ctx-size
-      - ${LLAMA_SERVER_CTX_SIZE:-2048}
+      - ${LLAMA_SERVER_CTX_SIZE:-4096}
       - -t
-      - ${LLAMA_SERVER_THREADS:-4}
+      - ${LLAMA_SERVER_THREADS:-8}
       - --host
       - 0.0.0.0
       - --port
-      - "8080"
+      - "8085"
       - --n-gpu-layers
-      - ${LLAMA_SERVER_N_GPU_LAYERS:-999}
+      - ${LLAMA_SERVER_N_GPU_LAYERS:-0}
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     ports:
-      - "8080:8080"
+      - "8085:8085"
     volumes:
       - llama_models:/models:ro
-      - ./backend/llama_templates:/templates:ro
     depends_on:
       gemma-models:
         condition: service_completed_successfully
@@ -86,14 +71,15 @@ services:
     container_name: parchee-backend
     shm_size: '2g'
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ruralmed
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ruralmed}
       AES_256_KEY: ${AES_256_KEY}
-      LLAMA_CPP_MODE: auto
-      LLAMA_CPP_BASE_URL: http://llama-server:8080
-      LLAMA_CPP_MODEL_NAME: gemma-4
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+      LLAMA_CPP_BASE_URL: http://llama-server:8085
+      LLAMA_CPP_MODEL_NAME: gemma-3-4b-it
       LLAMA_CPP_TIMEOUT_SECONDS: ${LLAMA_CPP_TIMEOUT_SECONDS:-180}
       LLAMA_CPP_MAX_TOKENS: ${LLAMA_CPP_MAX_TOKENS:-512}
       LLAMA_SERVER_AUTOSTART: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8003:8003"
     volumes:

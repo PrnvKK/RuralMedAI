@@ -1,15 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { API } from '@/lib/api';
+import type { LiveScribeMessage } from '@/types';
 
-const WS_URL = 'ws://localhost:8003/ws/live-consultation';
-
-export const useSocket = (onMessageReceived: (data: any) => void) => {
+export const useSocket = (onMessageReceived: (data: LiveScribeMessage) => void) => {
     const [isConnected, setIsConnected] = useState(false);
     const socketRef = useRef<WebSocket | null>(null);
 
     const connect = useCallback(() => {
         if (socketRef.current?.readyState === WebSocket.OPEN) return;
 
-        const ws = new WebSocket(WS_URL);
+        const ws = new WebSocket(API.WS);
 
         ws.onopen = () => {
             console.log('✅ Connected to backend');
@@ -18,7 +18,7 @@ export const useSocket = (onMessageReceived: (data: any) => void) => {
 
         ws.onmessage = (event) => {
             try {
-                const data = JSON.parse(event.data);
+                const data = JSON.parse(event.data) as LiveScribeMessage;
                 onMessageReceived(data);
             } catch (e) {
                 console.error("Error parsing WS message:", e);
@@ -40,7 +40,7 @@ export const useSocket = (onMessageReceived: (data: any) => void) => {
         }
     }, []);
 
-    const sendMessage = useCallback((data: any) => {
+    const sendMessage = useCallback((data: Record<string, unknown>) => {
         if (socketRef.current?.readyState === WebSocket.OPEN) {
             socketRef.current.send(JSON.stringify(data));
         }

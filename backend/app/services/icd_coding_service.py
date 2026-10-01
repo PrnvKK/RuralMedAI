@@ -13,7 +13,6 @@ persists to disk — subsequent starts are instant.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -61,9 +60,11 @@ class ICDCodingService:
 
         logger.info("ICDCodingService: attaching shared embedding model …")
         from app.services.shared_embedder import get_embedder
+
         self._embedder = get_embedder()
 
         import chromadb
+
         self._chroma = chromadb.PersistentClient(path=_CHROMA_CM_DIR)
         self._col = self._chroma.get_or_create_collection(
             name=_COLLECTION_NAME,
@@ -71,6 +72,7 @@ class ICDCodingService:
         )
 
         import simple_icd_10_cm as cm
+
         self._cm = cm
 
         if self._col.count() == 0:
@@ -90,8 +92,8 @@ class ICDCodingService:
                 self._descs.append(cm.get_description(code))
 
         logger.info("ICDCodingService: building TF-IDF index (%d codes) …", len(self._codes))
-        from sklearn.feature_extraction.text import TfidfVectorizer
         import joblib
+        from sklearn.feature_extraction.text import TfidfVectorizer
 
         _cache_prefix = _DATA_DIR / "tfidf_cache" / f"icd_cm_{len(self._codes)}"
         _cache_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -107,9 +109,7 @@ class ICDCodingService:
             self._tfidf = TfidfVectorizer(ngram_range=(1, 2), min_df=1, sublinear_tf=True)
             self._tfidf_matrix = self._tfidf.fit_transform(self._descs)
             # Character-level n-gram TF-IDF — enables partial word / typo matching
-            self._char_tfidf = TfidfVectorizer(
-                analyzer="char_wb", ngram_range=(3, 4), min_df=1, sublinear_tf=True
-            )
+            self._char_tfidf = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 4), min_df=1, sublinear_tf=True)
             self._char_tfidf_matrix = self._char_tfidf.fit_transform(self._descs)
             joblib.dump((self._tfidf, self._tfidf_matrix), _word_path)
             joblib.dump((self._char_tfidf, self._char_tfidf_matrix), _char_path)
@@ -119,6 +119,7 @@ class ICDCodingService:
         self._nlp = None
         try:
             import spacy
+
             self._nlp = spacy.load("en_core_sci_md")
             logger.info("ICDCodingService: scispacy en_core_sci_md loaded")
         except Exception as exc:
@@ -127,9 +128,7 @@ class ICDCodingService:
         logger.info("ICDCodingService: ready")
 
     def _populate(self, cm) -> None:
-        logger.info(
-            "ICDCodingService: first-run — populating ChromaDB from ICD-10-CM …"
-        )
+        logger.info("ICDCodingService: first-run — populating ChromaDB from ICD-10-CM …")
         unique_data: dict[str, str] = {}
         for code in cm.get_all_codes(with_dots=True):
             if cm.is_leaf(code):
@@ -139,8 +138,11 @@ class ICDCodingService:
         descs = list(unique_data.values())
         total = len(codes)
 
-        logger.info("ICDCodingService: computing embeddings for %d codes (this may take a few minutes on first run) …", total)
+        logger.info(
+            "ICDCodingService: computing embeddings for %d codes (this may take a few minutes on first run) …", total
+        )
         from app.services.shared_embedder import encode_with_progress
+
         embeddings = encode_with_progress(descs, batch_size=512, label="ICD-CM embeddings")
 
         logger.info("ICDCodingService: embeddings complete, upserting to ChromaDB …")
@@ -216,22 +218,26 @@ class ICDCodingService:
         # Exact single-code lookup — return immediately if user typed a full code
         for code in self._codes:
             if code.upper().replace(".", "") == normalised:
-                return [ICDSuggestion(
-                    code=code,
-                    description=self._cm.get_description(code),
-                    confidence=1.0,
-                    source="exact",
-                )]
+                return [
+                    ICDSuggestion(
+                        code=code,
+                        description=self._cm.get_description(code),
+                        confidence=1.0,
+                        source="exact",
+                    )
+                ]
 
         prefix_hits: list[ICDSuggestion] = []
         for code in self._codes:
             if code.upper().replace(".", "").startswith(normalised):
-                prefix_hits.append(ICDSuggestion(
-                    code=code,
-                    description=self._cm.get_description(code),
-                    confidence=1.0,
-                    source="exact",
-                ))
+                prefix_hits.append(
+                    ICDSuggestion(
+                        code=code,
+                        description=self._cm.get_description(code),
+                        confidence=1.0,
+                        source="exact",
+                    )
+                )
                 if len(prefix_hits) >= top_k:
                     break
         if prefix_hits:
@@ -299,16 +305,17 @@ class ICDCodingService:
             substr_boost = 0.15 if ql in desc.lower() else 0.0
             hybrid = round(min(0.4 * kw + 0.3 * ch + 0.3 * sem + substr_boost, 1.0), 4)
             if hybrid > 0:
-                merged.append(ICDSuggestion(
-                    code=code,
-                    description=desc,
-                    confidence=hybrid,
-                    source="hybrid",
-                ))
+                merged.append(
+                    ICDSuggestion(
+                        code=code,
+                        description=desc,
+                        confidence=hybrid,
+                        source="hybrid",
+                    )
+                )
 
         merged.sort(key=lambda s: s.confidence, reverse=True)
         return merged[:top_k]
-
 
     # ------------------------------------------------------------------
     # Internal tiers
@@ -368,7 +375,6 @@ class ICDCodingService:
             logger.warning("ICDCodingService._tier2_entity: %s", exc)
 
     def _tier3_tfidf(self, text: str, top_k: int, results: dict[str, ICDSuggestion]) -> None:
-        import numpy as np
 
         try:
             query_vec = self._tfidf.transform([text])

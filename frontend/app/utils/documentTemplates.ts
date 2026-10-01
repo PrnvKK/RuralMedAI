@@ -1,5 +1,29 @@
 
-export const getAyushmanTemplate = (patient: any) => {
+import type { Vitals } from '@/types';
+
+// Loose structural type for documents printed from encounter/EHR records. Kept
+// optional so the same templates render from either a live form or a DB row.
+export interface TemplatePatient {
+    id?: number;
+    name?: string;
+    age?: string;
+    gender?: string;
+    contact?: string;
+    created_at?: string;
+    pmjay_id?: string;
+    cghs_id?: string;
+    rank?: string;
+    service_no?: string;
+    chief_complaint?: string;
+    symptoms?: string[];
+    vitals?: Vitals;
+    medical_history?: string[];
+    medications?: string[];
+    tentative_doctor_diagnosis?: string;
+    initial_llm_diagnosis?: string;
+}
+
+export const getAyushmanTemplate = (patient: TemplatePatient) => {
     return `
     <html>
     <head>
@@ -32,7 +56,7 @@ export const getAyushmanTemplate = (patient: any) => {
                 <td><strong>Contact:</strong> ${patient.contact || "N/A"}</td>
             </tr>
             <tr>
-                <td><strong>Admission Date:</strong> ${new Date(patient.created_at).toLocaleDateString()}</td>
+                <td><strong>Admission Date:</strong> ${patient.created_at ? new Date(patient.created_at).toLocaleDateString() : "N/A"}</td>
                 <td><strong>Discharge Date:</strong> ${new Date().toLocaleDateString()}</td>
             </tr>
             <tr>
@@ -60,7 +84,7 @@ export const getAyushmanTemplate = (patient: any) => {
 
         <div class="section-title">TREATMENT GIVEN</div>
         <ul>
-            ${patient.medications?.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>No specific medications recorded</li>"}
+            ${patient.medications && patient.medications.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>No specific medications recorded</li>"}
         </ul>
 
         <div class="section-title">ADVICE ON DISCHARGE</div>
@@ -89,7 +113,7 @@ export const getAyushmanTemplate = (patient: any) => {
     `;
 };
 
-export const getCGHSTemplate = (patient: any) => {
+export const getCGHSTemplate = (patient: TemplatePatient) => {
     return `
     <html>
     <head>
@@ -122,7 +146,7 @@ export const getCGHSTemplate = (patient: any) => {
             </tr>
             <tr>
                 <td><strong>Age/Sex:</strong> ${patient.age}/${patient.gender}</td>
-                <td><strong>Date:</strong> ${new Date(patient.created_at).toLocaleDateString()}</td>
+                <td><strong>Date:</strong> ${patient.created_at ? new Date(patient.created_at).toLocaleDateString() : new Date().toLocaleDateString()}</td>
             </tr>
             <tr>
                 <td><strong>CGHS Wellness Centre:</strong> RuralMed CHC</td>
@@ -143,13 +167,13 @@ export const getCGHSTemplate = (patient: any) => {
         <div class="rx-section">
             <div class="rx-symbol">Rx</div>
             <ul class="med-list">
-                ${patient.medications?.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>As per Specialist advice</li>"}
+                ${patient.medications && patient.medications.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>As per Specialist advice</li>"}
             </ul>
         </div>
 
         <div style="margin-top: 30px;">
             <strong>Advice / Instructions:</strong><br>
-            ${patient.symptoms?.length > 0 ? "For symptoms: " + patient.symptoms.join(", ") : "Review after 2 weeks."}
+            ${patient.symptoms && patient.symptoms.length > 0 ? "For symptoms: " + patient.symptoms.join(", ") : "Review after 2 weeks."}
         </div>
 
         <div style="margin-top: 60px; text-align: right;">
@@ -167,7 +191,7 @@ export const getCGHSTemplate = (patient: any) => {
     `;
 };
 
-export const getECHSTemplate = (patient: any) => {
+export const getECHSTemplate = (patient: TemplatePatient) => {
     return `
     <html>
     <head>
@@ -197,7 +221,7 @@ export const getECHSTemplate = (patient: any) => {
             <div class="info-item"><strong>Name:</strong> ${patient.name}</div>
             <div class="info-item"><strong>Age/Gender:</strong> ${patient.age} / ${patient.gender}</div>
             <div class="info-item"><strong>Unit/Depot:</strong> ___________</div>
-            <div class="info-item"><strong>Date:</strong> ${new Date(patient.created_at).toLocaleDateString()}</div>
+            <div class="info-item"><strong>Date:</strong> ${patient.created_at ? new Date(patient.created_at).toLocaleDateString() : new Date().toLocaleDateString()}</div>
         </div>
 
         <div class="clinical-box">
@@ -208,7 +232,7 @@ export const getECHSTemplate = (patient: any) => {
             
             <div class="rx-header">TREATMENT / MEDICINES</div>
             <ol style="margin-top: 10px; font-size: 16px; line-height: 1.6;">
-                ${patient.medications?.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>No medications prescribed</li>"}
+                ${patient.medications && patient.medications.length > 0 ? patient.medications.map((m: string) => `<li>${m}</li>`).join('') : "<li>No medications prescribed</li>"}
             </ol>
 
             <div style="margin-top: 40px;">
